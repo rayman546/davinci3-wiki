@@ -1,20 +1,15 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:provider/provider.dart';
 import '../models/search_result.dart';
 import '../services/wiki_service.dart';
 import '../services/search_history_service.dart';
+import '../providers/connectivity_provider.dart';
 import '../widgets/search_result_card.dart';
 import 'article_details_page.dart';
 
 class SearchPage extends StatefulWidget {
-  final WikiService wikiService;
-  final SearchHistoryService searchHistoryService;
-
-  const SearchPage({
-    super.key,
-    required this.wikiService,
-    required this.searchHistoryService,
-  });
+  const SearchPage({super.key});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -44,7 +39,8 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _loadSearchHistory() async {
-    final history = widget.searchHistoryService.getSearchHistory();
+    final searchHistoryService = Provider.of<SearchHistoryService>(context, listen: false);
+    final history = searchHistoryService.getSearchHistory();
     setState(() {
       _searchHistory = history;
     });
@@ -60,6 +56,16 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
+    final isConnected = Provider.of<ConnectivityProvider>(context, listen: false).isConnected;
+    if (!isConnected) {
+      setState(() {
+        _error = 'You are offline. Cannot perform search.';
+        _isLoading = false;
+        _showHistory = false;
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -67,12 +73,15 @@ class _SearchPageState extends State<SearchPage> {
     });
 
     try {
+      final wikiService = Provider.of<WikiService>(context, listen: false);
+      final searchHistoryService = Provider.of<SearchHistoryService>(context, listen: false);
+      
       final results = _isSemanticSearch
-          ? await widget.wikiService.semanticSearch(query)
-          : await widget.wikiService.search(query);
+          ? await wikiService.semanticSearch(query)
+          : await wikiService.search(query);
       
       // Add to search history
-      await widget.searchHistoryService.addSearch(query);
+      await searchHistoryService.addSearch(query);
       await _loadSearchHistory();
 
       setState(() {
@@ -99,12 +108,15 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _clearSearchHistory() async {
-    await widget.searchHistoryService.clearHistory();
+    final searchHistoryService = Provider.of<SearchHistoryService>(context, listen: false);
+    await searchHistoryService.clearHistory();
     await _loadSearchHistory();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isConnected = context.watch<ConnectivityProvider>().isConnected;
+
     return Column(
       children: [
         Padding(
@@ -116,7 +128,7 @@ class _SearchPageState extends State<SearchPage> {
                   controller: _searchController,
                   decoration: InputDecoration(
                     labelText: 'Search',
-                    hintText: 'Enter search query',
+                    hintText: isConnected ? 'Enter search query' : 'Search disabled while offline',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
@@ -128,6 +140,7 @@ class _SearchPageState extends State<SearchPage> {
                           )
                         : null,
                     border: const OutlineInputBorder(),
+                    enabled: isConnected,
                   ),
                   onChanged: _onSearchChanged,
                 ),
@@ -135,14 +148,16 @@ class _SearchPageState extends State<SearchPage> {
               const SizedBox(width: 16.0),
               ToggleButtons(
                 isSelected: [!_isSemanticSearch, _isSemanticSearch],
-                onPressed: (index) {
-                  setState(() {
-                    _isSemanticSearch = index == 1;
-                    if (_searchController.text.isNotEmpty) {
-                      _performSearch(_searchController.text);
+                onPressed: isConnected 
+                  ? (index) {
+                      setState(() {
+                        _isSemanticSearch = index == 1;
+                        if (_searchController.text.isNotEmpty) {
+                          _performSearch(_searchController.text);
+                        }
+                      });
                     }
-                  });
-                },
+                  : null,
                 children: const [
                   Tooltip(
                     message: 'Regular Search',
@@ -179,6 +194,40 @@ class _SearchPageState extends State<SearchPage> {
               child: CircularProgressIndicator(),
             ),
           )
+        else if (!isConnected && !_showHistory)
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.wifi_off,
+                    size: 64,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'You\'re offline',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Search requires an internet connection',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        _showHistory = true;
+                      });
+                    },
+                    child: const Text('View recent searches'),
+                  ),
+                ],
+              ),
+            ),
+          )
         else if (_showHistory && _searchHistory.isNotEmpty)
           Expanded(
             child: Column(
@@ -212,14 +261,16 @@ class _SearchPageState extends State<SearchPage> {
                         trailing: IconButton(
                           icon: const Icon(Icons.close),
                           onPressed: () async {
-                            await widget.searchHistoryService.removeSearch(query);
+                            final searchHistoryService = Provider.of<SearchHistoryService>(context, listen: false);
+                            await searchHistoryService.removeSearch(query);
                             await _loadSearchHistory();
                           },
                         ),
-                        onTap: () {
+                        onTap: isConnected ? () {
                           _searchController.text = query;
                           _performSearch(query);
-                        },
+                        } : null,
+                        enabled: isConnected,
                       );
                     },
                   ),
@@ -248,8 +299,7 @@ class _SearchPageState extends State<SearchPage> {
                             context,
                             MaterialPageRoute(
                               builder: (context) => ArticleDetailsPage(
-                                wikiService: widget.wikiService,
-                                articleId: result.id,
+                                articleId: result.articleId,
                               ),
                             ),
                           );
@@ -257,6 +307,12 @@ class _SearchPageState extends State<SearchPage> {
                       );
                     },
                   ),
+          )
+        else
+          const Expanded(
+            child: Center(
+              child: Text('Type something to search'),
+            ),
           ),
       ],
     );

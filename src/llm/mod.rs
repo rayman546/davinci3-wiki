@@ -8,126 +8,97 @@ const DEFAULT_MODEL: &str = "llama2";
 const DEFAULT_TEMPERATURE: f32 = 0.7;
 const DEFAULT_MAX_TOKENS: usize = 1024;
 
-#[derive(Debug, Serialize)]
-pub struct CompletionRequest {
+#[derive(Debug, Serialize, Deserialize)]
+struct GenerationRequest {
     model: String,
     prompt: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: bool,
     max_tokens: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stop: Option<Vec<String>>,
+    temperature: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CompletionResponse {
-    pub response: String,
+#[derive(Debug, Serialize, Deserialize)]
+struct GenerationResponse {
+    model: String,
+    response: String,
 }
 
-pub struct LLMClient {
+pub struct LlmService {
     client: Client,
     ollama_url: String,
     model: String,
-    temperature: f32,
-    max_tokens: usize,
 }
 
-impl LLMClient {
-    pub fn new(ollama_url: &str) -> Self {
+impl LlmService {
+    pub fn new(ollama_url: &str, model: Option<&str>) -> Self {
         Self {
             client: Client::new(),
             ollama_url: ollama_url.to_string(),
-            model: DEFAULT_MODEL.to_string(),
-            temperature: DEFAULT_TEMPERATURE,
-            max_tokens: DEFAULT_MAX_TOKENS,
+            model: model.unwrap_or(DEFAULT_MODEL).to_string(),
         }
     }
 
-    pub fn with_model(mut self, model: &str) -> Self {
-        self.model = model.to_string();
-        self
-    }
+    pub async fn generate_text(&self, prompt: &str) -> WikiResult<String> {
+        info!("Generating text with model: {}", self.model);
+        debug!("Prompt: {}", prompt);
 
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = temperature.clamp(0.0, 1.0);
-        self
-    }
-
-    pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
-        self.max_tokens = max_tokens;
-        self
-    }
-
-    pub async fn complete(&self, prompt: &str) -> WikiResult<String> {
-        let request = CompletionRequest {
+        let request = GenerationRequest {
             model: self.model.clone(),
             prompt: prompt.to_string(),
-            temperature: Some(self.temperature),
-            max_tokens: Some(self.max_tokens),
-            stop: None,
+            stream: false,
+            max_tokens: Some(1024),
+            temperature: Some(0.7),
         };
 
         let response = self.client
             .post(format!("{}/api/generate", self.ollama_url))
             .json(&request)
             .send()
-            .await?
-            .json::<CompletionResponse>()
-            .await?;
+            .await
+            .map_err(|e| WikiError::OperationFailed(format!("Failed to send request to LLM: {}", e)))?
+            .json::<GenerationResponse>()
+            .await
+            .map_err(|e| WikiError::OperationFailed(format!("Failed to parse LLM response: {}", e)))?;
 
+        debug!("Generated text: {}", response.response);
         Ok(response.response)
     }
 
-    pub async fn complete_with_context(&self, prompt: &str, context: &str) -> WikiResult<String> {
-        let full_prompt = format!("Context:\n{}\n\nQuestion:\n{}", context, prompt);
-        self.complete(&full_prompt).await
+    pub async fn summarize_article(&self, title: &str, content: &str) -> WikiResult<String> {
+        let prompt = format!(
+            "Please provide a concise summary of the following Wikipedia article:\n\nTitle: {}\n\n{}",
+            title, content
+        );
+        self.generate_text(&prompt).await
     }
 
-    pub async fn summarize(&self, text: &str) -> WikiResult<String> {
+    pub async fn answer_question(&self, article_title: &str, article_content: &str, question: &str) -> WikiResult<String> {
         let prompt = format!(
-            "Please provide a concise summary of the following text:\n\n{}\n\nSummary:",
-            text
+            "Based on the following Wikipedia article, please answer the question.\n\nArticle Title: {}\n\nArticle Content: {}\n\nQuestion: {}\n\nAnswer:",
+            article_title, article_content, question
         );
-        self.complete(&prompt).await
-    }
-
-    pub async fn answer_question(&self, question: &str, context: &str) -> WikiResult<String> {
-        let prompt = format!(
-            "Based on the following context, please answer the question. If the answer cannot be found in the context, say so.\n\nContext:\n{}\n\nQuestion:\n{}\n\nAnswer:",
-            context,
-            question
-        );
-        self.complete(&prompt).await
+        self.generate_text(&prompt).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::{mock, server_url};
 
     #[tokio::test]
-    async fn test_llm_client() -> WikiResult<()> {
-        let client = LLMClient::new("http://localhost:11434")
-            .with_model("llama2")
-            .with_temperature(0.7)
-            .with_max_tokens(100);
+    async fn test_generate_text() -> WikiResult<()> {
+        let mock_server = mock("POST", "/api/generate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"model":"llama2","response":"This is a test response."}"#)
+            .create();
 
-        // Test basic completion
-        let response = client.complete("What is Rust?").await?;
-        assert!(!response.is_empty());
+        let llm = LlmService::new(&server_url(), Some("llama2"));
+        let response = llm.generate_text("Test prompt").await?;
 
-        // Test completion with context
-        let context = "Rust is a systems programming language focused on safety, concurrency, and performance.";
-        let response = client
-            .complete_with_context("What are the main features of Rust?", context)
-            .await?;
-        assert!(!response.is_empty());
-
-        // Test summarization
-        let text = "Rust is a systems programming language that runs blazingly fast, prevents segfaults, and guarantees thread safety. It accomplishes these goals by being memory-safe without using garbage collection.";
-        let summary = client.summarize(text).await?;
-        assert!(!summary.is_empty());
+        assert_eq!(response, "This is a test response.");
+        mock_server.assert();
 
         Ok(())
     }

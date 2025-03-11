@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:provider/provider.dart';
 import '../models/article.dart';
 import '../services/wiki_service.dart';
+import '../providers/connectivity_provider.dart';
 import '../widgets/article_card.dart';
 
 class ArticleDetailsPage extends StatefulWidget {
-  final WikiService wikiService;
   final String articleId;
 
   const ArticleDetailsPage({
     super.key,
-    required this.wikiService,
     required this.articleId,
   });
 
@@ -37,7 +37,8 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
     });
 
     try {
-      final article = await widget.wikiService.getArticle(widget.articleId);
+      final wikiService = Provider.of<WikiService>(context, listen: false);
+      final article = await wikiService.getArticle(widget.articleId);
       setState(() {
         _article = article;
         _isLoading = false;
@@ -56,8 +57,9 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
 
   Future<void> _loadRelatedArticles(List<String> articleIds) async {
     try {
+      final wikiService = Provider.of<WikiService>(context, listen: false);
       final articles = await Future.wait(
-        articleIds.map((id) => widget.wikiService.getArticle(id)),
+        articleIds.map((id) => wikiService.getArticle(id)),
       );
       setState(() {
         _relatedArticles = articles;
@@ -69,6 +71,8 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isConnected = context.watch<ConnectivityProvider>().isConnected;
+
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(
@@ -86,9 +90,18 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
               ),
               const SizedBox(height: 16.0),
               ElevatedButton(
-                onPressed: _loadArticle,
+                onPressed: isConnected ? _loadArticle : null,
                 child: const Text('Retry'),
               ),
+              if (!isConnected)
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    'You are offline. Please reconnect to retry.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
             ],
           ),
         ),
@@ -109,6 +122,13 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_article?.title ?? 'Article'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: isConnected ? _loadArticle : null,
+            tooltip: isConnected ? 'Refresh' : 'Offline',
+          ),
+        ],
       ),
       body: Row(
         children: [
@@ -171,7 +191,6 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
                               context,
                               MaterialPageRoute(
                                 builder: (context) => ArticleDetailsPage(
-                                  wikiService: widget.wikiService,
                                   articleId: article.id,
                                 ),
                               ),

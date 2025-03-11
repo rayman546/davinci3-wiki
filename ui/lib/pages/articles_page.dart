@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/article.dart';
 import '../services/wiki_service.dart';
+import '../providers/connectivity_provider.dart';
 import '../widgets/article_card.dart';
 import 'article_details_page.dart';
 
 class ArticlesPage extends StatefulWidget {
-  final WikiService wikiService;
-
-  const ArticlesPage({
-    super.key,
-    required this.wikiService,
-  });
+  const ArticlesPage({super.key});
 
   @override
   State<ArticlesPage> createState() => _ArticlesPageState();
@@ -46,8 +43,9 @@ class _ArticlesPageState extends State<ArticlesPage> {
       });
 
       try {
-        final articles = await widget.wikiService.getArticles(
-          offset: _currentPage * _pageSize,
+        final wikiService = Provider.of<WikiService>(context, listen: false);
+        final articles = await wikiService.getArticles(
+          page: _currentPage + 1,
           limit: _pageSize,
         );
 
@@ -79,6 +77,8 @@ class _ArticlesPageState extends State<ArticlesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isConnected = context.watch<ConnectivityProvider>().isConnected;
+
     if (_error != null) {
       return Center(
         child: Column(
@@ -92,7 +92,7 @@ class _ArticlesPageState extends State<ArticlesPage> {
             ),
             const SizedBox(height: 16.0),
             ElevatedButton(
-              onPressed: () {
+              onPressed: isConnected ? () {
                 setState(() {
                   _error = null;
                   _articles = null;
@@ -100,9 +100,18 @@ class _ArticlesPageState extends State<ArticlesPage> {
                   _hasMore = true;
                 });
                 _loadArticles();
-              },
+              } : null, // Disable retry button when offline
               child: const Text('Retry'),
             ),
+            if (!isConnected)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'You are offline. Please reconnect to retry.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ),
           ],
         ),
       );
@@ -123,36 +132,47 @@ class _ArticlesPageState extends State<ArticlesPage> {
       );
     }
 
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(8.0),
-      itemCount: _articles!.length + (_hasMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == _articles!.length) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(16.0),
-              child: CircularProgressIndicator(),
-            ),
-          );
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (isConnected) {
+          setState(() {
+            _articles = null;
+            _currentPage = 0;
+            _hasMore = true;
+          });
+          await _loadArticles();
         }
-
-        final article = _articles![index];
-        return ArticleCard(
-          article: article,
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ArticleDetailsPage(
-                  wikiService: widget.wikiService,
-                  articleId: article.id,
-                ),
+      },
+      child: ListView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(8.0),
+        itemCount: _articles!.length + (_hasMore && isConnected ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == _articles!.length) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: CircularProgressIndicator(),
               ),
             );
-          },
-        );
-      },
+          }
+
+          final article = _articles![index];
+          return ArticleCard(
+            article: article,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ArticleDetailsPage(
+                    articleId: article.id,
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 } 

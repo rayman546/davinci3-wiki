@@ -39,10 +39,13 @@ impl VectorStore {
         let path = path.as_ref().to_path_buf();
         std::fs::create_dir_all(&path)?;
 
-        let env = EnvOpenOptions::new()
-            .map_size(10 * 1024 * 1024 * 1024) // 10GB
-            .max_dbs(1)
-            .open(path)?;
+        // LMDB operations require unsafe
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(10 * 1024 * 1024 * 1024) // 10GB
+                .max_dbs(1)
+                .open(path)?
+        };
 
         let mut wtxn = env.write_txn()?;
         let db = env.create_database(&mut wtxn, Some("vectors"))?;

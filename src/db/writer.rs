@@ -18,11 +18,30 @@ impl<'a> DatabaseWriter<'a> {
         }
     }
 
+    pub fn create_tables(&self) -> WikiResult<()> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS articles (title TEXT PRIMARY KEY, content TEXT, size INTEGER, last_modified TEXT);
+             CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+             CREATE TABLE IF NOT EXISTS article_categories (article_id INTEGER, category_id INTEGER, 
+                PRIMARY KEY (article_id, category_id),
+                FOREIGN KEY (article_id) REFERENCES articles(rowid),
+                FOREIGN KEY (category_id) REFERENCES categories(id));
+             CREATE TABLE IF NOT EXISTS images (id INTEGER PRIMARY KEY, filename TEXT, path TEXT, 
+                size INTEGER, mime_type TEXT, hash TEXT UNIQUE, caption TEXT);
+             CREATE TABLE IF NOT EXISTS article_images (article_id INTEGER, image_id INTEGER,
+                PRIMARY KEY (article_id, image_id),
+                FOREIGN KEY (article_id) REFERENCES articles(rowid),
+                FOREIGN KEY (image_id) REFERENCES images(id));
+             CREATE TABLE IF NOT EXISTS redirects (from_title TEXT PRIMARY KEY, to_title TEXT);
+             CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, content, content='articles', content_rowid='rowid');"
+        ).map_err(WikiError::from)
+    }
+
     pub fn begin_transaction(&self) -> WikiResult<Transaction> {
         self.conn.transaction().map_err(WikiError::from)
     }
 
-    pub fn write_article(&mut self, article: &WikiArticle, tx: &Transaction) -> WikiResult<()> {
+    pub fn write_article(&self, article: &WikiArticle, tx: &Transaction) -> WikiResult<()> {
         // Insert into articles FTS table
         tx.execute(
             "INSERT INTO articles (title, content, size, last_modified) VALUES (?1, ?2, ?3, ?4)",
@@ -70,29 +89,24 @@ impl<'a> DatabaseWriter<'a> {
         Ok(())
     }
 
-    fn get_or_create_category(&mut self, category: &str, tx: &Transaction) -> WikiResult<i64> {
-        if let Some(&id) = self.category_cache.get(category) {
-            return Ok(id);
-        }
-
-        let id = match tx.query_row(
+    fn get_or_create_category(&self, category: &str, tx: &Transaction) -> WikiResult<i64> {
+        // Try to get existing category
+        match tx.query_row(
             "SELECT id FROM categories WHERE name = ?1",
             params![category],
             |row| row.get(0),
         ) {
-            Ok(id) => id,
+            Ok(id) => Ok(id),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Create new category
                 tx.execute(
                     "INSERT INTO categories (name) VALUES (?1)",
                     params![category],
                 )?;
-                tx.last_insert_rowid()
+                Ok(tx.last_insert_rowid())
             }
-            Err(e) => return Err(WikiError::from(e)),
-        };
-
-        self.category_cache.insert(category.to_string(), id);
-        Ok(id)
+            Err(e) => Err(WikiError::from(e)),
+        }
     }
 
     fn write_image(&self, image: &WikiImage, tx: &Transaction) -> WikiResult<i64> {
@@ -146,7 +160,7 @@ mod tests {
     #[test]
     fn test_write_simple_article() -> WikiResult<()> {
         let (conn, _temp_file) = create_test_db();
-        let mut writer = DatabaseWriter::new(&conn);
+        let writer = DatabaseWriter::new(&conn);
         let tx = writer.begin_transaction()?;
 
         let mut article = WikiArticle::new(
@@ -181,7 +195,7 @@ mod tests {
     #[test]
     fn test_write_redirect() -> WikiResult<()> {
         let (conn, _temp_file) = create_test_db();
-        let mut writer = DatabaseWriter::new(&conn);
+        let writer = DatabaseWriter::new(&conn);
         let tx = writer.begin_transaction()?;
 
         let mut article = WikiArticle::new(

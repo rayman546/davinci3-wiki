@@ -1,47 +1,65 @@
-use davinci3_wiki::parser::Article;
+use davinci3_wiki::parser::models::WikiArticle;
 
 /// Get a single test article
-pub fn get_test_article() -> Article {
-    Article {
+pub fn get_test_article() -> WikiArticle {
+    WikiArticle {
         id: Some(1),
         title: "Test Article".to_string(),
         content: "This is a test article with some content for testing purposes.".to_string(),
         categories: vec!["Test".to_string(), "Example".to_string()],
+        is_redirect: false,
+        redirect_to: None,
+        images: Vec::new(),
     }
 }
 
 /// Get a list of test articles
-pub fn get_test_articles() -> Vec<Article> {
+pub fn get_test_articles() -> Vec<WikiArticle> {
     vec![
-        Article {
+        WikiArticle {
             id: None,
             title: "Test Article 1".to_string(),
             content: "This is the first test article content.".to_string(),
             categories: vec!["Test".to_string(), "First".to_string()],
+            is_redirect: false,
+            redirect_to: None,
+            images: Vec::new(),
         },
-        Article {
+        WikiArticle {
             id: None,
             title: "Test Article 2".to_string(),
             content: "This is the second test article content.".to_string(),
             categories: vec!["Test".to_string(), "Second".to_string()],
+            is_redirect: false,
+            redirect_to: None,
+            images: Vec::new(),
         },
-        Article {
+        WikiArticle {
             id: None,
             title: "Test Article 3".to_string(),
             content: "This is the third test article with special content about science.".to_string(),
             categories: vec!["Test".to_string(), "Science".to_string()],
+            is_redirect: false,
+            redirect_to: None,
+            images: Vec::new(),
         },
-        Article {
+        WikiArticle {
             id: None,
             title: "Test Article 4".to_string(),
             content: "This is the fourth test article with special content about technology.".to_string(),
             categories: vec!["Test".to_string(), "Technology".to_string()],
+            is_redirect: false,
+            redirect_to: None,
+            images: Vec::new(),
         },
-        Article {
+        WikiArticle {
             id: None,
             title: "Science Example".to_string(),
             content: "Scientific article about physics, chemistry, and biology.".to_string(),
             categories: vec!["Science".to_string()],
+            is_redirect: false,
+            redirect_to: None,
+            images: Vec::new(),
         },
     ]
 }
@@ -50,24 +68,65 @@ pub fn get_test_articles() -> Vec<Article> {
 pub fn get_test_xml_dump() -> &'static str {
     r#"<mediawiki>
       <page>
-        <title>Test Page 1</title>
+        <title>Test Article 1</title>
         <ns>0</ns>
         <revision>
-          <text>Test content 1</text>
+          <text>This is the first test article content.</text>
         </revision>
       </page>
       <page>
-        <title>Test Page 2</title>
+        <title>Test Article 2</title>
         <ns>0</ns>
         <revision>
-          <text>Test content 2</text>
+          <text>This is the second test article content.</text>
         </revision>
       </page>
       <page>
-        <title>Test Page 3</title>
+        <title>Test Article 3</title>
         <ns>0</ns>
         <revision>
-          <text>Test content 3 with more detailed information</text>
+          <text>This is the third test article with special content about science.</text>
+        </revision>
+      </page>
+      <page>
+        <title>Talk:Something</title>
+        <ns>1</ns>
+        <revision>
+          <text>This should be skipped</text>
+        </revision>
+      </page>
+    </mediawiki>"#
+}
+
+/// Get an updated test XML dump for incremental update testing
+pub fn get_updated_test_xml_dump() -> &'static str {
+    r#"<mediawiki>
+      <page>
+        <title>Test Article 1</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is the first test article content.</text>
+        </revision>
+      </page>
+      <page>
+        <title>Test Article 2</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is the second test article content that has been modified.</text>
+        </revision>
+      </page>
+      <page>
+        <title>New Article 1</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is a completely new article with new content.</text>
+        </revision>
+      </page>
+      <page>
+        <title>New Article 2</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is another new article with different content.</text>
         </revision>
       </page>
       <page>
@@ -142,6 +201,49 @@ pub fn get_test_installer_config(temp_dir: &std::path::Path) -> davinci3_wiki::i
         vector_dir: temp_dir.join("vectors"),
         ollama_url: "http://localhost:11434".to_string(),
         skip_download: true,
-        skip_embeddings: true,
+        skip_embeddings: false,
+        min_article_length: 50,
     }
+}
+
+/// Get a partial invalid XML dump with some valid and some invalid articles
+pub fn get_partial_invalid_xml_dump() -> &'static str {
+    r#"<mediawiki>
+      <page>
+        <title>Valid Article 1</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is a valid article that should be imported successfully.</text>
+        </revision>
+      </page>
+      <page>
+        <title>Valid Article 2</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is another valid article that should be imported successfully.</text>
+        </revision>
+      </page>
+      <page>
+        <!-- Missing title element, should cause an error or be skipped -->
+        <ns>0</ns>
+        <revision>
+          <text>Article with missing title</text>
+        </revision>
+      </page>
+      <page>
+        <title>Invalid Article</title>
+        <ns>0</ns>
+        <!-- Missing revision element, should cause an error or be skipped -->
+      </page>
+      <page>
+        <title>Valid Article 3</title>
+        <ns>0</ns>
+        <revision>
+          <text>This is another valid article after some invalid ones.</text>
+        </revision>
+      </page>
+      <corrupted_element>
+        This is completely invalid and might break the parser
+      </corrupted_element>
+    </mediawiki>"#
 } 

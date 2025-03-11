@@ -18,7 +18,7 @@ pub fn init_logging(level: Level) -> WikiResult<()> {
 
     match subscriber {
         Ok(_) => Ok(()),
-        Err(e) => Err(WikiError::operation_failed(format!(
+        Err(e) => Err(WikiError::OperationFailed(format!(
             "Failed to initialize logging: {}", e
         ))),
     }
@@ -43,7 +43,7 @@ pub fn init_debug_logging() -> WikiResult<()> {
 
     match subscriber {
         Ok(_) => Ok(()),
-        Err(e) => Err(WikiError::operation_failed(format!(
+        Err(e) => Err(WikiError::OperationFailed(format!(
             "Failed to initialize debug logging: {}", e
         ))),
     }
@@ -67,7 +67,7 @@ pub fn init_production_logging() -> WikiResult<()> {
 
     match subscriber {
         Ok(_) => Ok(()),
-        Err(e) => Err(WikiError::operation_failed(format!(
+        Err(e) => Err(WikiError::OperationFailed(format!(
             "Failed to initialize production logging: {}", e
         ))),
     }

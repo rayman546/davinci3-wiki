@@ -17,7 +17,20 @@ pub struct WikiXmlParser {
 }
 
 impl WikiXmlParser {
-    pub fn new<P: AsRef<Path>>(path: P) -> WikiResult<Self> {
+    pub fn new() -> Self {
+        Self {
+            reader: Reader::from_reader(BufReader::new(File::open("/dev/null").unwrap_or_else(|_| {
+                // Fallback for Windows
+                File::open("NUL").unwrap_or_else(|_| {
+                    panic!("Could not open null device")
+                })
+            }))),
+            buf: Vec::new(),
+            metadata: None,
+        }
+    }
+
+    pub fn from_file<P: AsRef<Path>>(path: P) -> WikiResult<Self> {
         let file = File::open(path).map_err(WikiError::from)?;
         let reader = Reader::from_reader(BufReader::new(file));
         Ok(Self {
@@ -25,6 +38,20 @@ impl WikiXmlParser {
             buf: Vec::new(),
             metadata: None,
         })
+    }
+    
+    pub fn from_string(content: &str) -> Self {
+        let reader = Reader::from_str(content);
+        Self {
+            reader: Reader::from_reader(BufReader::new(File::open("/dev/null").unwrap_or_else(|_| {
+                // Fallback for Windows
+                File::open("NUL").unwrap_or_else(|_| {
+                    panic!("Could not open null device")
+                })
+            }))),
+            buf: Vec::new(),
+            metadata: None,
+        }
     }
 
     pub fn parse_metadata(&mut self) -> WikiResult<WikiDumpMetadata> {
@@ -52,7 +79,7 @@ impl WikiXmlParser {
                         // Try to get timestamp from mediawiki tag attributes
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"timestamp" {
-                                if let Ok(ts) = attr.value.unescape().unwrap().parse::<DateTime<Utc>>() {
+                                if let Ok(ts) = String::from_utf8_lossy(&attr.value).parse::<DateTime<Utc>>() {
                                     dump_date = ts;
                                 }
                             }
@@ -73,9 +100,9 @@ impl WikiXmlParser {
                 Ok(Event::Text(e)) => {
                     if in_siteinfo {
                         if in_generator {
-                            generator = e.unescape().unwrap().into_owned();
+                            generator = String::from_utf8_lossy(&e).into_owned();
                         } else if in_lang {
-                            lang = e.unescape().unwrap().into_owned();
+                            lang = String::from_utf8_lossy(&e).into_owned();
                         }
                     }
                 }
@@ -129,7 +156,7 @@ impl WikiXmlParser {
                             // Get redirect target from attributes
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"title" {
-                                    article.redirect_to = Some(attr.value.unescape().unwrap().into_owned());
+                                    article.redirect_to = Some(String::from_utf8_lossy(&attr.value).into_owned());
                                 }
                             }
                         }
@@ -143,7 +170,8 @@ impl WikiXmlParser {
                             article.update_size();
                             
                             // Extract categories from content
-                            for line in article.content.lines() {
+                            let content = article.content.clone();
+                            for line in content.lines() {
                                 if line.starts_with("[[Category:") {
                                     let cat = line.trim_start_matches("[[Category:")
                                         .trim_end_matches("]]")
@@ -154,7 +182,8 @@ impl WikiXmlParser {
                             }
 
                             // Extract images from content
-                            for line in article.content.lines() {
+                            let content = article.content.clone();
+                            for line in content.lines() {
                                 if line.starts_with("[[File:") || line.starts_with("[[Image:") {
                                     let img = line.trim_start_matches("[[File:")
                                         .trim_start_matches("[[Image:")
@@ -192,10 +221,10 @@ impl WikiXmlParser {
                 Ok(Event::Text(e)) => {
                     if in_page {
                         if in_title {
-                            let title = e.unescape().unwrap().into_owned();
+                            let title = String::from_utf8_lossy(&e).into_owned();
                             current_article = Some(WikiArticle::new(title, String::new()));
                         } else if in_text {
-                            current_text.push_str(&e.unescape().unwrap().into_owned());
+                            current_text.push_str(&String::from_utf8_lossy(&e).into_owned());
                         }
                     }
                 }
@@ -215,6 +244,18 @@ impl WikiXmlParser {
 
         info!("Finished processing {} articles", count);
         Ok(count)
+    }
+
+    pub fn parse(&mut self, content: &str) -> WikiResult<Vec<WikiArticle>> {
+        let mut articles = Vec::new();
+        let mut parser = WikiXmlParser::from_string(content);
+        
+        parser.parse_articles(|article| {
+            articles.push(article);
+            Ok(())
+        })?;
+        
+        Ok(articles)
     }
 }
 
@@ -241,10 +282,7 @@ mod tests {
             </page>
         </mediawiki>"#;
 
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "{}", xml_content).unwrap();
-
-        let mut parser = WikiXmlParser::new(temp_file.path())?;
+        let mut parser = WikiXmlParser::from_string(xml_content);
         let metadata = parser.parse_metadata()?;
         
         assert_eq!(metadata.lang, "en");

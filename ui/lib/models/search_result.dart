@@ -1,9 +1,6 @@
-import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:json_annotation/json_annotation.dart';
 
-part 'search_result.freezed.dart';
-part 'search_result.g.dart';
-
+@JsonSerializable()
 class SearchResult {
   final String id;
   final String title;

@@ -1,4 +1,4 @@
-mod models;
+pub mod models;
 mod text;
 mod xml;
 
@@ -19,13 +19,13 @@ pub fn extract_gzip<P: AsRef<Path>>(source: P, dest: P) -> WikiResult<()> {
     let input = File::open(&source)
         .map_err(|e| {
             error!("Failed to open source file: {}", e);
-            WikiError::io(e)
+            WikiError::Io(e)
         })?;
 
     let output = File::create(&dest)
         .map_err(|e| {
             error!("Failed to create destination file: {}", e);
-            WikiError::io(e)
+            WikiError::Io(e)
         })?;
 
     let mut decoder = GzDecoder::new(BufReader::new(input));
@@ -35,7 +35,7 @@ pub fn extract_gzip<P: AsRef<Path>>(source: P, dest: P) -> WikiResult<()> {
     io::copy(&mut decoder, &mut writer)
         .map_err(|e| {
             error!("Failed to decompress file: {}", e);
-            WikiError::io(e)
+            WikiError::Io(e)
         })?;
     debug!("Decompression completed");
 

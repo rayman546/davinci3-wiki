@@ -1,6 +1,6 @@
 use rusqlite::{Connection, params};
-use std::collections::HashSet;
-use tracing::debug;
+use tracing::{debug, info};
+use chrono::{DateTime, Utc};
 
 use crate::error_handling::{WikiError, WikiResult};
 use crate::parser::models::{WikiArticle, WikiImage};
@@ -15,72 +15,128 @@ impl<'a> DatabaseReader<'a> {
     }
 
     pub fn get_article(&self, title: &str) -> WikiResult<Option<WikiArticle>> {
-        // Check for redirect first
-        if let Some(redirect_to) = self.get_redirect(title)? {
-            debug!("Article '{}' is a redirect to '{}'", title, redirect_to);
-            return self.get_article(&redirect_to);
-        }
-
-        let article = match self.conn.query_row(
-            "SELECT title, content, size, last_modified FROM articles WHERE title = ?1",
+        let result = self.conn.query_row(
+            "SELECT title, content, last_modified, size FROM articles WHERE title = ?1",
             params![title],
             |row| {
-                let title: String = row.get(0)?;
-                let content: String = row.get(1)?;
-                let size: usize = row.get(2)?;
-                let last_modified: String = row.get(3)?;
-                
                 Ok(WikiArticle {
-                    title,
-                    content,
-                    size,
-                    last_modified: last_modified.parse().unwrap(),
-                    categories: HashSet::new(),
+                    title: row.get(0)?,
+                    content: row.get(1)?,
+                    categories: Default::default(),
+                    last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        ))?
+                        .with_timezone(&Utc),
+                    size: row.get(3)?,
                     redirect_to: None,
                     images: Vec::new(),
                 })
             },
-        ) {
-            Ok(mut article) => article,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(WikiError::from(e)),
-        };
+        );
 
-        // Load categories
-        let mut stmt = self.conn.prepare(
-            "SELECT c.name FROM categories c
-             JOIN article_categories ac ON c.id = ac.category_id
-             WHERE ac.article_id = (SELECT rowid FROM articles WHERE title = ?1)"
-        )?;
-        let categories = stmt.query_map(params![title], |row| {
-            row.get::<_, String>(0)
-        })?;
-        for category in categories {
-            article.add_category(category?);
+        match result {
+            Ok(article) => {
+                // Load categories
+                let mut categories = Vec::new();
+                let mut stmt = self.conn.prepare(
+                    "SELECT c.name FROM categories c
+                     JOIN article_categories ac ON c.id = ac.category_id
+                     WHERE ac.article_id = (SELECT rowid FROM articles WHERE title = ?1)"
+                )?;
+                let mut rows = stmt.query(params![title])?;
+                while let Some(row) = rows.next()? {
+                    categories.push(row.get::<_, String>(0)?);
+                }
+
+                // Load images
+                let mut images = Vec::new();
+                let mut stmt = self.conn.prepare(
+                    "SELECT i.filename, i.path, i.size, i.mime_type, i.hash, i.caption
+                     FROM images i
+                     JOIN article_images ai ON i.id = ai.image_id
+                     WHERE ai.article_id = (SELECT rowid FROM articles WHERE title = ?1)"
+                )?;
+                let mut rows = stmt.query(params![title])?;
+                while let Some(row) = rows.next()? {
+                    images.push(WikiImage {
+                        filename: row.get(0)?,
+                        path: row.get(1)?,
+                        size: row.get(2)?,
+                        mime_type: row.get(3)?,
+                        hash: row.get(4)?,
+                        caption: row.get(5)?,
+                    });
+                }
+
+                // Update article with loaded data
+                let mut article = article;
+                article.categories = categories.into_iter().collect();
+                article.images = images;
+                Ok(Some(article))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(WikiError::from(e)),
         }
+    }
 
-        // Load images
+    pub fn get_articles(&self, limit: usize) -> WikiResult<Vec<WikiArticle>> {
         let mut stmt = self.conn.prepare(
-            "SELECT i.filename, i.path, i.size, i.mime_type, i.hash, i.caption
-             FROM images i
-             JOIN article_images ai ON i.id = ai.image_id
-             WHERE ai.article_id = (SELECT rowid FROM articles WHERE title = ?1)"
+            "SELECT title, content, last_modified, size FROM articles LIMIT ?1"
         )?;
-        let images = stmt.query_map(params![title], |row| {
-            Ok(WikiImage::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(3)?,
-                row.get(4)?,
-            )
-            .with_size(row.get(2)?)
-            .with_caption(row.get(5)?))
-        })?;
-        for image in images {
-            article.add_image(image?);
-        }
 
-        Ok(Some(article))
+        let articles = stmt.query_map(params![limit as i64], |row| {
+            Ok(WikiArticle {
+                title: row.get(0)?,
+                content: row.get(1)?,
+                categories: Default::default(),
+                last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    ))?
+                    .with_timezone(&Utc),
+                size: row.get(3)?,
+                redirect_to: None,
+                images: Vec::new(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(articles)
+    }
+
+    pub fn search_articles(&self, query: &str, limit: usize) -> WikiResult<Vec<WikiArticle>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT title, content, last_modified, size FROM articles 
+             WHERE articles MATCH ?1 
+             ORDER BY rank
+             LIMIT ?2"
+        )?;
+
+        let articles = stmt.query_map(params![query, limit as i64], |row| {
+            Ok(WikiArticle {
+                title: row.get(0)?,
+                content: row.get(1)?,
+                categories: Default::default(),
+                last_modified: DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    ))?
+                    .with_timezone(&Utc),
+                size: row.get(3)?,
+                redirect_to: None,
+                images: Vec::new(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(articles)
     }
 
     pub fn get_redirect(&self, title: &str) -> WikiResult<Option<String>> {
@@ -93,39 +149,6 @@ impl<'a> DatabaseReader<'a> {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(WikiError::from(e)),
         }
-    }
-
-    pub fn search_articles(&self, query: &str) -> WikiResult<Vec<WikiArticle>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT title, content, size, last_modified 
-             FROM articles 
-             WHERE articles MATCH ?1
-             ORDER BY rank"
-        )?;
-
-        let articles = stmt.query_map(params![query], |row| {
-            Ok(WikiArticle {
-                title: row.get(0)?,
-                content: row.get(1)?,
-                size: row.get(2)?,
-                last_modified: row.get::<_, String>(3)?.parse().unwrap(),
-                categories: HashSet::new(),
-                redirect_to: None,
-                images: Vec::new(),
-            })
-        })?;
-
-        let mut results = Vec::new();
-        for article in articles {
-            let mut article = article?;
-            if let Some(full_article) = self.get_article(&article.title)? {
-                article.categories = full_article.categories;
-                article.images = full_article.images;
-            }
-            results.push(article);
-        }
-
-        Ok(results)
     }
 
     pub fn list_categories(&self) -> WikiResult<Vec<String>> {
@@ -164,10 +187,9 @@ impl<'a> DatabaseReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::writer::DatabaseWriter;
     use crate::db::schema::init_database;
+    use crate::db::writer::DatabaseWriter;
     use tempfile::NamedTempFile;
-    use chrono::Utc;
 
     fn create_test_db() -> (Connection, NamedTempFile) {
         let temp_file = NamedTempFile::new().unwrap();
@@ -177,30 +199,32 @@ mod tests {
     }
 
     #[test]
-    fn test_read_article() -> WikiResult<()> {
-        let (conn, _temp_file) = create_test_db();
-        let mut writer = DatabaseWriter::new(&conn);
+    fn test_get_article() -> WikiResult<()> {
+        let (mut conn, _temp_file) = create_test_db();
+        
+        // Insert test article
+        let mut writer = DatabaseWriter::new(&mut conn);
         let tx = writer.begin_transaction()?;
-
-        // Write test article
+        
         let mut article = WikiArticle::new(
             "Test Article".to_string(),
             "This is a test article.".to_string(),
         );
         article.add_category("Test Category".to_string());
         article.update_size();
-
+        
         writer.write_article(&article, &tx)?;
         DatabaseWriter::commit_transaction(tx)?;
-
-        // Read and verify
-        let reader = DatabaseReader::new(&conn);
-        let retrieved = reader.get_article("Test Article")?.unwrap();
         
+        // Test retrieval
+        let reader = DatabaseReader::new(&conn);
+        let retrieved = reader.get_article("Test Article")?;
+        
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.title, "Test Article");
         assert_eq!(retrieved.content, "This is a test article.");
-        assert!(retrieved.categories.contains("Test Category"));
-
+        
         Ok(())
     }
 

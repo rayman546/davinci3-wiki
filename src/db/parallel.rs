@@ -1,108 +1,97 @@
-use rusqlite::{Connection, Transaction};
-use std::sync::mpsc::{channel, Sender};
+use rusqlite::Connection;
+use std::sync::mpsc::{channel, Receiver};
 use std::thread;
-use tracing::{debug, info};
+use std::path::Path;
 
 use crate::error_handling::WikiResult;
 use crate::parser::models::WikiArticle;
 use crate::db::writer::DatabaseWriter;
 
-pub struct ParallelImporter {
-    num_threads: usize,
-    batch_size: usize,
+pub struct ParallelDatabaseWriter {
+    thread_count: usize,
 }
 
-impl ParallelImporter {
-    pub fn new(num_threads: usize, batch_size: usize) -> Self {
-        Self {
-            num_threads,
-            batch_size,
+impl ParallelDatabaseWriter {
+    pub fn new(thread_count: usize) -> Self {
+        ParallelDatabaseWriter {
+            thread_count: thread_count.max(1),
         }
     }
 
-    pub fn import_articles<I>(&self, articles: I, conn: &Connection) -> WikiResult<usize>
-    where
-        I: Iterator<Item = WikiArticle> + Send + 'static,
-    {
+    pub fn process_articles<P: AsRef<Path>>(
+        &self,
+        articles: Vec<WikiArticle>,
+        db_path: P,
+    ) -> WikiResult<()> {
+        let db_path = db_path.as_ref().to_path_buf();
+        let chunk_size = (articles.len() + self.thread_count - 1) / self.thread_count;
         let (tx, rx) = channel();
-        let mut total_imported = 0;
 
-        // Spawn worker threads
         let mut handles = Vec::new();
-        for thread_id in 0..self.num_threads {
-            let thread_conn = Connection::open(conn.path().unwrap())?;
-            let thread_tx = tx.clone();
-            
+
+        for chunk in articles.chunks(chunk_size) {
+            let chunk = chunk.to_vec();
+            let db_path = db_path.clone();
+            let tx = tx.clone();
+
             let handle = thread::spawn(move || -> WikiResult<()> {
-                let mut writer = DatabaseWriter::new(&thread_conn);
+                let conn = Connection::open(&db_path)?;
+                let mut writer = DatabaseWriter::new(&conn);
                 let mut batch = Vec::new();
-                
-                loop {
-                    match thread_tx.send(()) {
-                        Ok(_) => {
-                            // Ready for more work
-                            debug!("Worker {} ready", thread_id);
-                        }
-                        Err(_) => {
-                            // Channel closed, main thread is done
-                            debug!("Worker {} shutting down", thread_id);
-                            break;
-                        }
+
+                for article in chunk {
+                    batch.push(article);
+
+                    if batch.len() >= 100 {
+                        Self::process_batch(&batch, &db_path)?;
+                        batch.clear();
                     }
                 }
-                
+
+                if !batch.is_empty() {
+                    Self::process_batch(&batch, &db_path)?;
+                }
+
+                tx.send(chunk.len()).unwrap_or_default();
                 Ok(())
             });
-            
+
             handles.push(handle);
         }
-        
-        // Process articles in batches
-        let mut current_batch = Vec::with_capacity(self.batch_size);
-        for article in articles {
-            current_batch.push(article);
-            
-            if current_batch.len() >= self.batch_size {
-                // Wait for an available worker
-                rx.recv().unwrap();
-                
-                // Process batch
-                self.process_batch(&current_batch, conn)?;
-                total_imported += current_batch.len();
-                
-                info!("Imported {} articles", total_imported);
-                current_batch.clear();
-            }
-        }
-        
-        // Process remaining articles
-        if !current_batch.is_empty() {
-            rx.recv().unwrap();
-            self.process_batch(&current_batch, conn)?;
-            total_imported += current_batch.len();
-        }
-        
-        // Signal workers to shut down
+
         drop(tx);
-        
-        // Wait for workers to finish
+        self.monitor_progress(rx, articles.len());
+
         for handle in handles {
             handle.join().unwrap()?;
         }
-        
-        Ok(total_imported)
+
+        Ok(())
     }
-    
-    fn process_batch(&self, batch: &[WikiArticle], conn: &Connection) -> WikiResult<()> {
-        let mut writer = DatabaseWriter::new(conn);
+
+    fn process_batch<P: AsRef<Path>>(batch: &[WikiArticle], db_path: P) -> WikiResult<()> {
+        let conn = Connection::open(db_path.as_ref())?;
+        let mut writer = DatabaseWriter::new(&conn);
         let tx = writer.begin_transaction()?;
-        
+
         for article in batch {
             writer.write_article(article, &tx)?;
         }
-        
-        DatabaseWriter::commit_transaction(tx)?;
+
+        tx.commit()?;
         Ok(())
+    }
+
+    fn monitor_progress(&self, rx: Receiver<usize>, total: usize) {
+        let mut processed = 0;
+        while let Ok(count) = rx.recv() {
+            processed += count;
+            println!("Processed {}/{} articles ({}%)", 
+                processed, 
+                total, 
+                (processed as f64 / total as f64 * 100.0) as usize
+            );
+        }
     }
 }
 
@@ -132,9 +121,8 @@ mod tests {
         }).collect();
         
         // Import articles
-        let importer = ParallelImporter::new(4, 10);
-        let total = importer.import_articles(articles.into_iter(), &conn)?;
-        assert_eq!(total, 100);
+        let importer = ParallelDatabaseWriter::new(4);
+        importer.process_articles(articles, temp_file.path())?;
         
         // Verify imports
         let reader = DatabaseReader::new(&conn);

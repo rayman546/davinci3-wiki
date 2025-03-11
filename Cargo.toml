@@ -3,25 +3,29 @@ name = "davinci3-wiki"
 version = "0.1.0"
 edition = "2021"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-# Error handling
+# Error handling and logging
 thiserror = "1.0"
 anyhow = "1.0"
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Async runtime
 tokio = { version = "1.36", features = ["full"] }
+futures-util = "0.3"
 
-# SQLite
-rusqlite = { version = "0.31", features = ["bundled"] }
+# Database
+rusqlite = { version = "0.34.0", features = ["bundled", "functions", "vtab", "blob"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.27.0"
 
 # XML parsing
 quick-xml = "0.31"
 
 # Text processing
+unicode-segmentation = "1.10"
 regex = "1.10"
 lazy_static = "1.4"
 url = "2.5"
@@ -33,30 +37,44 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Compression
-flate2 = "1.0"
-
-# Image handling
-image = "0.24"
-
-# SHA2
-sha2 = "0.10"
-
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
 
-# Vector embedding
+# Web server
+warp = "0.3"
+
+# LMDB wrapper (for vector store)
 heed = "0.20"
+
+# Vector operations
 ndarray = { version = "0.15", features = ["serde"] }
+
+# Random number generation
 rand = "0.8"
+
+# Data parallelism
 rayon = "1.8"
 
-# Flutter-rs dependencies
-flutter-rs = "0.1"
-flutter-engine = "0.1"
-flutter-plugins = "0.1"
-tao = "0.24"
-window-shadows = "0.2"
+# Compression
+bzip2 = "0.4"
+flate2 = "1.0"
+
+# Image processing
+image = "0.24"
+
+# Command-line interface
+clap = { version = "4.4", features = ["derive"] }
+
+# Security
+sha2 = "0.10"
+
+# Flutter-rs dependencies are commented out as we'll use the Flutter UI separately
+# flutter-rs = "0.1"
+# flutter-engine = "0.1"
+# flutter-plugins = "0.1"
+# tao = "0.24"
+# window-shadows = "0.2"
 
 [dev-dependencies]
-tempfile = "3.8" 
+tempfile = "3.8"
+mockito = "1.2" 
