@@ -1,0 +1,42 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'davinci3-wiki'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=davinci3-wiki",
+                    "--package=davinci3-wiki"
+                ],
+                "filter": {
+                    "name": "davinci3-wiki",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=davinci3-wiki",
+                    "--package=davinci3-wiki"
+                ],
+                "filter": {
+                    "name": "davinci3-wiki",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

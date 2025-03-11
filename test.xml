@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/">
+  <page>
+    <title>Test Article 1</title>
+    <text>This is the content of test article 1.
+[[Category:Test]]
+[[File:test1.jpg|thumb|Test image 1]]
+Some more content here.</text>
+  </page>
+  <page>
+    <title>Test Article 2</title>
+    <text>#REDIRECT [[Another Article]]</text>
+  </page>
+  <page>
+    <title>Test Article 3</title>
+    <text>This is another test article.
+[[Category:Test]]
+[[Category:Sample]]
+[[File:test2.jpg|Test image 2]]
+Here's a link to [[Test Article 1]].</text>
+  </page>
+</mediawiki> 

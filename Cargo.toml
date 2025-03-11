@@ -1,0 +1,62 @@
+[package]
+name = "davinci3-wiki"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+
+# SQLite
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# XML parsing
+quick-xml = "0.31"
+
+# Text processing
+regex = "1.10"
+lazy_static = "1.4"
+url = "2.5"
+
+# Date and time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Compression
+flate2 = "1.0"
+
+# Image handling
+image = "0.24"
+
+# SHA2
+sha2 = "0.10"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Vector embedding
+heed = "0.20"
+ndarray = { version = "0.15", features = ["serde"] }
+rand = "0.8"
+rayon = "1.8"
+
+# Flutter-rs dependencies
+flutter-rs = "0.1"
+flutter-engine = "0.1"
+flutter-plugins = "0.1"
+tao = "0.24"
+window-shadows = "0.2"
+
+[dev-dependencies]
+tempfile = "3.8" 

@@ -1,0 +1,181 @@
+---
+description: davinci3 rules
+globs: 
+alwaysApply: false
+---
+1. Data Ingestion & Parsing Tool
+Purpose:
+
+Ingest and parse the offline Wikipedia dump to extract article text, metadata, and images.
+Key Responsibilities:
+
+Dump Parsing: Read the raw XML or JSON Wikipedia dump and extract article titles, content, categories, and image references.
+Data Cleaning: Strip out unnecessary markup, resolve redirects, and perform entity resolution.
+Image Handling: Extract, compress, and optimize images for offline storage.
+Tech Stack & Libraries:
+
+Language: Rust (for its performance, safety, and concurrency)
+Parsing: Use libraries like quick-xml for XML parsing or serde_json for JSON if needed.
+Image Compression: Use image crate along with optimization libraries.
+Async Processing: Leverage tokio for asynchronous file I/O.
+Error Handling & Logging:
+
+Integrate with the error handling module (see Tool 9) to catch parsing errors, file read errors, or image processing exceptions.
+Log processing milestones and failures using structured logging.
+2. Database & Indexing Manager
+Purpose:
+
+Store structured Wikipedia article data and support efficient text-based searches.
+Key Responsibilities:
+
+Data Storage: Define a normalized SQLite schema to store articles, metadata, and image paths.
+Full‑Text Search: Build full-text indexes (e.g., using SQLite FTS5) for rapid keyword and phrase searches.
+Data Integrity: Implement migration scripts and version control for schema updates.
+Tech Stack & Libraries:
+
+Database: SQLite for lightweight, embedded storage.
+ORM/Query: Use Rust libraries such as SQLx or Diesel for database interactions.
+Indexing: Leverage built‑in FTS5 support in SQLite.
+Error Handling & Logging:
+
+Ensure all database operations are wrapped with error checks and transaction management.
+Log SQL queries, connection errors, and migration results using the centralized logging system.
+3. Vector Embedding & LMDB Storage Tool
+Purpose:
+
+Generate semantic vector embeddings for articles using an offline LLM, and store these embeddings for rapid similarity searches.
+Key Responsibilities:
+
+Embedding Generation: Interface with the offline LLM (e.g., using the Ollama runtime) to produce embeddings from article text.
+Vector Storage: Use LMDB to store high-dimensional vectors for efficient lookup and similarity matching.
+Search Index: Create and update an index of embeddings for rapid semantic search.
+Tech Stack & Libraries:
+
+LLM Integration: Use the Ollama API (or similar) with Rust bindings (or via FFI if a Python component is needed).
+Vector Storage: Use Rust LMDB libraries such as heed or lmdb-rs.
+Math/Similarity: Optionally integrate with libraries for vector math if custom similarity metrics are needed.
+Error Handling & Logging:
+
+Handle potential LLM timeouts or API errors gracefully, with retries if necessary.
+Log each embedding generation request and LMDB read/write failures.
+4. LLM Integration Engine
+Purpose:
+
+Act as the central query processor that combines text-based search, vector search, and LLM capabilities to answer user queries.
+Key Responsibilities:
+
+Query Routing: Accept user queries and determine whether to perform full‑text search, semantic (vector) search, or a combination (RAG).
+LLM Processing: Use the offline LLM (Ollama) to generate summaries, answer questions, and verify facts.
+Result Aggregation: Combine results from the SQLite search and LMDB vector search to produce a coherent, context-aware answer.
+Tech Stack & Libraries:
+
+Language & Framework: Rust, using an asynchronous web framework like Axum or Actix‑web to expose RESTful endpoints.
+LLM API: Direct integration with Ollama (or via a REST/FFI interface).
+RAG & Logic: Custom logic in Rust to stitch together retrieval-augmented generation results.
+Error Handling & Logging:
+
+Catch and log any LLM integration errors, query parsing errors, or timeouts.
+Provide fallback mechanisms (e.g., return a “try again later” message) if external tools fail.
+5. Offline Installation & Update Manager
+Purpose:
+
+Automate installation, initial data load, and periodic updates of Wikipedia dumps, LLM runtime, and models.
+Key Responsibilities:
+
+Resource Verification: Check available disk space, memory, and CPU capabilities before installation.
+Installation Automation: Download, verify (using hash checks), and install the Wikipedia dump, LLM runtime, and models.
+Scheduled Updates: Schedule and perform data and software updates while preserving data integrity.
+Tech Stack & Libraries:
+
+Language: Rust for CLI tools or a small cross-platform updater component.
+Networking: Use reqwest for HTTP downloads.
+Hashing & Verification: Use cryptographic libraries (e.g., ring) to validate file integrity.
+Error Handling & Logging:
+
+Detect and report download failures, corrupted files, and update mismatches.
+Log each installation step, successful verifications, and retry attempts.
+6. User Interface & Cross-Platform Frontend
+Purpose:
+
+Provide a smooth, responsive user interface for developers and end‑users, ensuring offline access and easy interaction with the backend.
+Key Responsibilities:
+
+UI/UX Implementation: Design an intuitive interface using Material Design components, with clear offline indicators.
+Cross‑Platform Support: Ensure compatibility across iOS, Android, Windows, macOS, and Linux.
+Backend Communication: Use FFI or platform channels to connect with the Rust backend for real-time queries and updates.
+Tech Stack & Libraries:
+
+Framework: Flutter (using Dart) for a single codebase across platforms.
+Communication: Use Flutter’s FFI or platform channels to interact with Rust modules compiled as native libraries.
+Design: Utilize Material Design 3 for consistency and responsiveness.
+Error Handling & Logging:
+
+Implement in‑app error notifications and logging for UI issues.
+Use Flutter packages (like logger) to capture client‑side logs.
+7. Testing & Performance Benchmark Suite
+Purpose:
+
+Validate every component of the system through unit, integration, and performance tests, ensuring the application meets specified metrics.
+Key Responsibilities:
+
+Unit Testing: Write tests for each module (e.g., parsing, database operations, vector search, LLM integration).
+Integration Testing: Simulate full query flows from the UI to the backend and back.
+Performance Benchmarking: Measure launch times, search latency (<500ms), article load times (<1 sec), and LLM response (<3 sec).
+Tech Stack & Libraries:
+
+Rust Testing: Use Rust’s built‑in testing framework (cargo test) and benchmarking libraries (e.g., criterion.rs).
+Flutter Testing: Use Flutter’s test package for UI and integration tests.
+Error Handling & Logging:
+
+Capture test failures with detailed logging output and stack traces.
+Automate test reports and performance metrics logging to a centralized dashboard.
+8. Documentation & Developer Support Tool
+Purpose:
+
+Provide thorough, up‑to‑date documentation for APIs, system architecture, development setup, and troubleshooting.
+Key Responsibilities:
+
+API Documentation: Generate documentation directly from code comments and type annotations using tools like cargo doc.
+User & Developer Guides: Write comprehensive guides covering setup, deployment, and common troubleshooting.
+Knowledge Base: Maintain an internal wiki or Markdown repository for continuous updates.
+Tech Stack & Libraries:
+
+Documentation Tools: Use Markdown and static site generators like MkDocs or Docusaurus for online docs.
+Version Control: Store documentation alongside code in Git repositories (e.g., GitHub Pages).
+Error Handling & Logging:
+
+Document known error codes and log locations from the error handling module.
+Maintain a changelog and troubleshooting guide that updates automatically on deployment.
+9. Robust Error Handling and Logging Framework
+Purpose:
+
+Provide a centralized, consistent mechanism to capture, manage, and log errors and application events across all modules.
+Key Responsibilities:
+
+Error Propagation: Wrap all modules with clear error types and propagate errors with context.
+Structured Logging: Implement structured, asynchronous logging to capture detailed context for each error and operational event.
+Monitoring & Alerts: Integrate with external monitoring tools to alert developers of critical failures (optionally integrate with Sentry).
+Tech Stack & Libraries:
+
+Language: Rust (for backend modules) using tracing and tracing-subscriber for structured logging.
+Monitoring: Optionally integrate with sentry for error aggregation and alerting.
+Frontend Logging: For Flutter, use logging packages such as logger and funnel logs through platform channels if needed.
+Error Handling Strategy:
+
+Use Rust’s Result and custom error types to ensure errors are caught at the source.
+For asynchronous processes, leverage Tokio’s error handling patterns to ensure graceful degradation under failure conditions.
+Integration Overview
+Data Flow:
+
+Parsing Module (Tool 1) processes the Wikipedia dump and feeds structured data into the Database Manager (Tool 2).
+Vector Embedding Module (Tool 3) takes article content from the database to generate embeddings and index them in LMDB.
+Query Processing:
+
+When a user query is received via the Flutter Frontend (Tool 6), it is routed to the LLM Integration Engine (Tool 4).
+The engine retrieves relevant articles through both traditional text search (Tool 2) and semantic (vector) search (Tool 3), then uses the offline LLM to generate context-aware answers.
+Maintenance & Updates:
+
+Offline Installer (Tool 5) ensures the data and models are current, while Testing Suite (Tool 7) continuously verifies performance and correctness.
+Developer Support:
+
+Documentation (Tool 8) provides clear instructions and guides, while Error Handling & Logging (Tool 9) ensures that all failures are logged, monitored, and reported for fast resolution.
