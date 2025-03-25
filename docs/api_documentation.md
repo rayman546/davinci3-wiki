@@ -368,7 +368,26 @@ Responses include pagination metadata:
 
 ## CORS Support
 
-The API has CORS enabled by default for all origins. If you need to restrict this, you can use a reverse proxy.
+The API has CORS configured for security with the following settings:
+
+- **Allowed Origins**: By default, only localhost origins are allowed (`http://localhost`, `http://localhost:8080`, `http://127.0.0.1`, `http://127.0.0.1:8080`)
+- **Allowed Methods**: GET, POST, OPTIONS
+- **Allowed Headers**: Content-Type, Authorization
+- **Max Age**: 86400 seconds (24 hours)
+
+If you need to expose the API to other origins, you must modify the allowed origins list in the server configuration. 
+
+### Security Warning
+
+⚠️ **Important**: If you expose this API publicly, be aware of the following security considerations:
+
+1. The API is designed primarily for local use
+2. No authentication is implemented by default
+3. Consider using a reverse proxy with authentication if exposing to the internet
+4. Restrict CORS to only the specific origins that need access
+5. Implement rate limiting to prevent abuse
+
+To customize CORS settings, modify the `ApiServer::with_origins` method in `src/api/mod.rs`.
 
 ## Websocket API
 
@@ -461,38 +480,121 @@ const BASE_URL = 'http://localhost:8080';
 
 async function searchArticles(query, isSemantic = false) {
   const endpoint = isSemantic ? '/semantic-search' : '/search';
-  const response = await fetch(`${BASE_URL}${endpoint}?q=${encodeURIComponent(query)}&limit=5`);
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  try {
+    const response = await fetch(`${BASE_URL}${endpoint}?q=${encodeURIComponent(query)}&limit=5`);
+    
+    // Enhanced error handling based on status code
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      
+      if (response.status >= 400 && response.status < 500) {
+        // Client errors (4xx)
+        const message = errorData?.error?.message || 'Invalid request';
+        const code = errorData?.error?.code || 'CLIENT_ERROR';
+        throw new Error(`Client error (${response.status}): ${message} [${code}]`);
+      } else if (response.status >= 500) {
+        // Server errors (5xx)
+        throw new Error(`Server error (${response.status}): The server is experiencing issues. Please try again later.`);
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    }
+    
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      throw new Error('Network error: Unable to connect to the server. Please check if the server is running.');
+    }
+    throw error; // Re-throw the enhanced error
   }
-  
-  return await response.json();
 }
 
 async function getArticle(articleId) {
-  const response = await fetch(`${BASE_URL}/articles/${articleId}`);
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  try {
+    const response = await fetch(`${BASE_URL}/articles/${articleId}`);
+    
+    // Enhanced error handling based on status code
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      
+      if (response.status === 404) {
+        throw new Error(`Article not found: The article with ID "${articleId}" does not exist.`);
+      } else if (response.status >= 400 && response.status < 500) {
+        // Client errors (4xx)
+        const message = errorData?.error?.message || 'Invalid request';
+        const code = errorData?.error?.code || 'CLIENT_ERROR';
+        throw new Error(`Client error (${response.status}): ${message} [${code}]`);
+      } else if (response.status >= 500) {
+        // Server errors (5xx)
+        throw new Error(`Server error (${response.status}): The server is experiencing issues. Please try again later.`);
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    }
+    
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      throw new Error('Network error: Unable to connect to the server. Please check if the server is running.');
+    }
+    throw error; // Re-throw the enhanced error
   }
-  
-  return await response.json();
 }
 
 async function askQuestion(articleId, question) {
-  const response = await fetch(
-    `${BASE_URL}/articles/${articleId}/ask?q=${encodeURIComponent(question)}`
-  );
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  try {
+    const response = await fetch(
+      `${BASE_URL}/articles/${articleId}/ask?q=${encodeURIComponent(question)}`
+    );
+    
+    // Enhanced error handling based on status code
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      
+      if (response.status === 404) {
+        throw new Error(`Article not found: The article with ID "${articleId}" does not exist.`);
+      } else if (response.status === 400) {
+        throw new Error(`Invalid question: ${errorData?.error?.message || 'Please provide a valid question.'}`);
+      } else if (response.status >= 400 && response.status < 500) {
+        // Other client errors (4xx)
+        const message = errorData?.error?.message || 'Invalid request';
+        const code = errorData?.error?.code || 'CLIENT_ERROR';
+        throw new Error(`Client error (${response.status}): ${message} [${code}]`);
+      } else if (response.status >= 500) {
+        // Server errors (5xx)
+        throw new Error(`Server error (${response.status}): The server is experiencing issues. Please try again later.`);
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    }
+    
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    } else if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+      throw new Error('Network error: Unable to connect to the server. Please check if the server is running.');
+    }
+    throw error; // Re-throw the enhanced error
   }
-  
-  return await response.json();
 }
 
-// Example usage
+// Helper function to display user-friendly error messages
+function displayErrorMessage(error) {
+  let message = error.message;
+  
+  // Log full error details to console for debugging
+  console.error('API Error:', error);
+  
+  // Display user-friendly message to the user
+  alert(`Error: ${message}`);
+}
+
+// Example usage with improved error handling
 async function main() {
   try {
     const results = await searchArticles('quantum physics');
@@ -514,8 +616,25 @@ async function main() {
       console.log(`A: ${answer.answer}`);
     }
   } catch (error) {
-    console.error('Error:', error);
+    displayErrorMessage(error);
   }
+}
+
+// Add request timeout capability
+function fetchWithTimeout(url, options = {}, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeout);
+    
+    fetch(url, { ...options, signal })
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timeoutId));
+  });
 }
 
 main();

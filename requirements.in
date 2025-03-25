@@ -1,0 +1,27 @@
+# Web scraping
+playwright
+html5lib
+
+# Search engine
+duckduckgo-search
+
+# LLM integration
+openai  # o1 support
+anthropic
+python-dotenv
+
+# Testing
+unittest2
+pytest
+pytest-asyncio
+
+# Google Generative AI
+google-generativeai
+
+# gRPC, for Google Generative AI preventing WARNING messages
+grpcio
+
+# Development tools
+pip-tools
+black
+isort 

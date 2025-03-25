@@ -13,6 +13,7 @@ pub struct ApiServer {
     db_path: String,
     vector_store: Arc<VectorStore>,
     llm_service: Arc<LlmService>,
+    allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,10 +34,25 @@ pub struct ArticleResponse {
 
 impl ApiServer {
     pub fn new(db_path: &str, vector_store: Arc<VectorStore>, llm_service: Arc<LlmService>) -> Self {
+        Self::with_origins(db_path, vector_store, llm_service, vec![
+            "http://localhost".to_string(),
+            "http://localhost:8080".to_string(),
+            "http://127.0.0.1".to_string(),
+            "http://127.0.0.1:8080".to_string(),
+        ])
+    }
+
+    pub fn with_origins(
+        db_path: &str, 
+        vector_store: Arc<VectorStore>, 
+        llm_service: Arc<LlmService>,
+        allowed_origins: Vec<String>
+    ) -> Self {
         Self {
             db_path: db_path.to_string(),
             vector_store,
             llm_service,
+            allowed_origins,
         }
     }
 
@@ -44,6 +60,7 @@ impl ApiServer {
         let db_path = self.db_path.clone();
         let vector_store = self.vector_store.clone();
         let llm_service = self.llm_service.clone();
+        let allowed_origins = self.allowed_origins.clone();
 
         // Create connection pool
         let db = Arc::new(Mutex::new(Connection::open(&db_path)?));
@@ -99,6 +116,13 @@ impl ApiServer {
             .and(warp::get())
             .and_then(handle_status);
 
+        // Configure CORS with specific allowed origins
+        let cors = warp::cors()
+            .allow_methods(vec!["GET", "POST", "OPTIONS"])
+            .allow_headers(vec!["Content-Type", "Authorization"])
+            .max_age(86400) // 24 hours in seconds
+            .allow_origins(allowed_origins.iter().map(|s| s.as_str()).collect::<Vec<&str>>());
+
         // Combine all routes
         let routes = articles_route
             .or(article_route)
@@ -106,7 +130,7 @@ impl ApiServer {
             .or(semantic_search_route)
             .or(summary_route)
             .or(status_route)
-            .with(warp::cors().allow_any_origin());
+            .with(cors);
 
         // Start the server
         warp::serve(routes).run(([127, 0, 0, 1], port)).await;

@@ -6,18 +6,44 @@ A Cursor-powered AI development environment with advanced agentic capabilities.
 
 ## Quick Start
 
-1. Activate the virtual environment:
+1. Set up the virtual environment:
    ```bash
+   # Create virtual environment
+   python3 -m venv venv
+   
    # On Windows
    venv\Scripts\activate
    
    # On macOS/Linux
    source venv/bin/activate
+   
+   # Install dependencies
+   pip install -r requirements.txt
    ```
 
 2. Configure your environment:
    - Copy `.env.example` to `.env` if you haven't already
    - Add your API keys in `.env` (optional)
+
+## Dependency Management
+
+This project uses `pip-tools` to manage dependencies:
+
+```bash
+# Install pip-tools
+pip install pip-tools
+
+# Update requirements.txt from requirements.in
+pip-compile requirements.in --output-file requirements.txt
+
+# Install all dependencies
+pip install -r requirements.txt
+```
+
+To add a new dependency:
+1. Add it to `requirements.in`
+2. Run `pip-compile requirements.in --output-file requirements.txt`
+3. Install with `pip install -r requirements.txt`
 
 ## Available Tools
 
