@@ -10,6 +10,7 @@ import html5lib
 import time
 from urllib.parse import urlparse
 import logging
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -35,97 +36,150 @@ async def fetch_page(url: str, context) -> Optional[str]:
     finally:
         await page.close()
 
-async def parse_html(html_content: Optional[str]) -> str:
+async def parse_html(html_content: Optional[str], url: str = "Unknown URL") -> str:
     """Parse HTML content and extract text with hyperlinks in markdown format."""
     if not html_content:
         return ""
     
     try:
         # Run the CPU-intensive parsing in a thread pool to avoid blocking the event loop
-        return await asyncio.to_thread(_parse_html_impl, html_content)
+        return await asyncio.to_thread(_parse_html_impl, html_content, url)
     except Exception as e:
         logger.error(f"Error parsing HTML: {str(e)}")
         return ""
 
-def _parse_html_impl(html_content: str) -> str:
-    """Actual HTML parsing implementation to run in a thread pool."""
-    document = html5lib.parse(html_content)
-    result = []
-    seen_texts = set()  # To avoid duplicates
-    
-    def should_skip_element(elem) -> bool:
-        """Check if the element should be skipped."""
-        # Skip script and style tags
-        if elem.tag in ['{http://www.w3.org/1999/xhtml}script', 
-                      '{http://www.w3.org/1999/xhtml}style']:
-            return True
-        # Skip empty elements or elements with only whitespace
-        if not any(text.strip() for text in elem.itertext()):
-            return True
-        return False
-    
-    def process_element(elem, depth=0):
-        """Process an element and its children recursively."""
-        if should_skip_element(elem):
-            return
+# Precompiled regex patterns for filtering
+noise_patterns = [
+    re.compile(r'function\(\)'),
+    re.compile(r'\.ready\('),
+    re.compile(r'<!\[CDATA\['),
+    re.compile(r'\]\]>'),
+    re.compile(r'on(load|click|mouseover|mouseout|submit|focus|blur)'),
+    re.compile(r'javascript:'),
+    re.compile(r'style='),
+    re.compile(r'class='),
+    re.compile(r'id='),
+    re.compile(r'\.getElementById'),
+    re.compile(r'\.getElementsBy'),
+    re.compile(r'document\.'),
+    re.compile(r'window\.'),
+    re.compile(r'\$\('),
+]
+
+def _parse_html_impl(html_content: str, url: str = "Unknown URL") -> str:
+    """Parse HTML content using html5lib and extract relevant text."""
+    try:
+        # Use html5lib parser for better HTML parsing
+        parsed_html = html5lib.parse(html_content, namespaceHTMLElements=False)
         
-        # Handle text content
-        if hasattr(elem, 'text') and elem.text:
-            text = elem.text.strip()
-            if text and text not in seen_texts:
-                # Check if this is an anchor tag
-                if elem.tag == '{http://www.w3.org/1999/xhtml}a':
-                    href = None
-                    for attr, value in elem.items():
-                        if attr.endswith('href'):
-                            href = value
-                            break
-                    if href and not href.startswith(('#', 'javascript:')):
-                        # Format as markdown link
-                        link_text = f"[{text}]({href})"
-                        result.append("  " * depth + link_text)
-                        seen_texts.add(text)
-                else:
-                    result.append("  " * depth + text)
-                    seen_texts.add(text)
+        # Define constants for commonly used tags
+        script_tag = "script"
+        style_tag = "style"
+        body_tag = "body"
+        anchor_tag = "a"
+        meta_tag = "meta"
+        title_tag = "title"
         
-        # Process children
-        for child in elem:
-            process_element(child, depth + 1)
+        # Cache for indentation strings
+        indent_cache = {}
         
-        # Handle tail text
-        if hasattr(elem, 'tail') and elem.tail:
-            tail = elem.tail.strip()
-            if tail and tail not in seen_texts:
-                result.append("  " * depth + tail)
-                seen_texts.add(tail)
-    
-    # Start processing from the body tag
-    body = document.find('.//{http://www.w3.org/1999/xhtml}body')
-    if body is not None:
-        process_element(body)
-    else:
-        # Fallback to processing the entire document
-        process_element(document)
-    
-    # Filter out common unwanted patterns
-    filtered_result = []
-    for line in result:
-        # Skip lines that are likely to be noise
-        if any(pattern in line.lower() for pattern in [
-            'var ', 
-            'function()', 
-            '.js',
-            '.css',
-            'google-analytics',
-            'disqus',
-            '{',
-            '}'
-        ]):
-            continue
-        filtered_result.append(line)
-    
-    return '\n'.join(filtered_result)
+        # Set to track seen text to avoid duplicates
+        seen_texts = set()
+        
+        # Check if an element should be skipped
+        def should_skip_element(element):
+            if element.tag in (script_tag, style_tag):
+                return True
+            
+            # Skip empty elements
+            if not element.text and not list(element):
+                return True
+                
+            # Skip elements with only whitespace
+            if element.text and element.text.strip() == "" and not list(element):
+                return True
+                
+            return False
+        
+        # Process an element and its children recursively
+        def process_element(element, indentation=0):
+            result = []
+            
+            # Get indentation string from cache or create it
+            if indentation not in indent_cache:
+                indent_cache[indentation] = "  " * indentation
+            indent = indent_cache[indentation]
+            
+            # Handle text content
+            if element.text and element.text.strip():
+                text = element.text.strip()
+                # Use hash for faster duplicate check
+                text_hash = hash(text)
+                if text_hash not in seen_texts:
+                    seen_texts.add(text_hash)
+                    result.append(f"{indent}{text}")
+            
+            # Process children
+            for child in element:
+                if not should_skip_element(child):
+                    child_result = process_element(child, indentation + 1)
+                    if child_result:
+                        result.extend(child_result)
+                
+                # Handle tail text (text after the element)
+                if child.tail and child.tail.strip():
+                    tail = child.tail.strip()
+                    # Use hash for faster duplicate check
+                    tail_hash = hash(tail)
+                    if tail_hash not in seen_texts:
+                        seen_texts.add(tail_hash)
+                        result.append(f"{indent}{tail}")
+            
+            return result
+        
+        # Extract metadata (title, description)
+        metadata = []
+        title_element = parsed_html.find(f".//{title_tag}")
+        if title_element is not None and title_element.text:
+            metadata.append(f"Title: {title_element.text.strip()}")
+        
+        # Look for meta description
+        for meta in parsed_html.findall(f".//{meta_tag}"):
+            if meta.get("name", "").lower() == "description" and meta.get("content"):
+                metadata.append(f"Description: {meta.get('content').strip()}")
+                break
+        
+        # Add URL
+        metadata.append(f"URL: {url}")
+        
+        # Extract body content or full document if body not found
+        body = parsed_html.find(f".//{body_tag}")
+        if body is None:
+            body = parsed_html
+            
+        # Process the document
+        content = process_element(body)
+        
+        # Combine metadata and content
+        result = metadata + [""] + content
+        
+        # Efficient filtering for common noise patterns
+        filtered_result = []
+        for line in result:
+            skip = False
+            # Check each pattern against the line
+            for pattern in noise_patterns:
+                if pattern.search(line):
+                    skip = True
+                    break
+            if not skip:
+                filtered_result.append(line)
+        
+        return "\n".join(filtered_result)
+    except Exception as e:
+        logger.error(f"Error parsing HTML: {str(e)}")
+        # Return minimal data on parsing error
+        return f"URL: {url}\n\nError parsing content: {str(e)}"
 
 async def process_urls(urls: List[str], max_concurrent: int = 5) -> List[str]:
     """Process multiple URLs concurrently."""
@@ -147,7 +201,7 @@ async def process_urls(urls: List[str], max_concurrent: int = 5) -> List[str]:
             html_contents = await asyncio.gather(*fetch_tasks)
             
             # Parse HTML contents using asyncio tasks instead of multiprocessing
-            parse_tasks = [parse_html(content) for content in html_contents]
+            parse_tasks = [parse_html(content, url) for content, url in zip(html_contents, urls)]
             results = await asyncio.gather(*parse_tasks)
             
             return results
