@@ -5,6 +5,9 @@ import '../models/article.dart';
 import '../services/wiki_service.dart';
 import '../providers/connectivity_provider.dart';
 import '../services/api_error_handler.dart';
+import '../widgets/error_display_widget.dart';
+import '../widgets/loading_state_widget.dart';
+import '../widgets/network_aware_widget.dart';
 
 class ArticleDetailsPage extends StatefulWidget {
   final String articleId;
@@ -23,8 +26,10 @@ class ArticleDetailsPage extends StatefulWidget {
 class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
   Article? _article;
   List<Article>? _relatedArticles;
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _isLoadingRelated = false;
   String? _error;
+  String? _relatedError;
 
   @override
   void initState() {
@@ -60,10 +65,11 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
         _isLoading = false;
       });
       
-      // Show error dialog
-      if (mounted) {
-        ApiErrorHandler.showErrorSnackBar(context, ApiErrorHandler.getErrorMessage(e));
-      }
+      // Log error
+      ApiErrorHandler.logError(
+        'Failed to load article ${widget.articleId}: ${e.toString()}',
+        showToast: false, // Don't show toast for this error
+      );
     }
   }
 
@@ -71,6 +77,11 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
     if (_article == null || _article!.relatedArticles.isEmpty) {
       return;
     }
+
+    setState(() {
+      _isLoadingRelated = true;
+      _relatedError = null;
+    });
 
     try {
       final wikiService = Provider.of<WikiService>(context, listen: false);
@@ -88,85 +99,92 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
           );
           relatedArticles.add(article);
         } catch (e) {
-          // Skip this related article
-          debugPrint('Failed to load related article $id: ${e.toString()}');
+          // Log individual related article load failures
+          ApiErrorHandler.logError(
+            'Failed to load related article $id: ${e.toString()}',
+            showToast: false,
+          );
         }
       }
 
       if (mounted) {
         setState(() {
           _relatedArticles = relatedArticles;
+          _isLoadingRelated = false;
         });
       }
     } catch (e) {
-      debugPrint('Error loading related articles: ${e.toString()}');
-      // Don't show errors for related articles, just log them
+      if (mounted) {
+        setState(() {
+          _relatedError = ApiErrorHandler.getErrorMessage(e);
+          _isLoadingRelated = false;
+        });
+      }
+      
+      // Log error
+      ApiErrorHandler.logError(
+        'Error loading related articles: ${e.toString()}',
+        showToast: false,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isConnected = context.watch<ConnectivityProvider>().isConnected;
-
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh article',
-            onPressed: isConnected ? _loadArticle : null,
+          Consumer<ConnectivityProvider>(
+            builder: (context, connectivityProvider, child) {
+              final isConnected = connectivityProvider.isConnected;
+              return IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: isConnected ? 'Refresh article' : 'Refresh not available offline',
+                onPressed: isConnected ? _loadArticle : null,
+              );
+            },
           ),
         ],
       ),
-      body: _buildBody(),
+      body: NetworkAwareWidget(
+        enforceConnectivity: false, // Allow showing cached article when offline
+        offlineMode: OfflineDisplayMode.badge,
+        onlineContent: _buildBody(),
+      ),
     );
   }
 
   Widget _buildBody() {
+    // Show loading state
     if (_isLoading && _article == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
+      return LoadingStateWidget(
+        useSkeleton: true,
+        skeletonType: SkeletonType.articleDetail,
+        message: 'Loading article...',
       );
     }
 
+    // Show error state
     if (_error != null && _article == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Theme.of(context).colorScheme.error,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Failed to load article',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadArticle,
-              child: const Text('Try Again'),
-            ),
-          ],
-        ),
+      return ErrorDisplayWidget(
+        errorType: ErrorType.network,
+        message: _error!,
+        title: 'Failed to load article',
+        onRetry: _loadArticle,
       );
     }
 
+    // Show empty state
     if (_article == null) {
-      return const Center(
-        child: Text('No article data available'),
+      return ErrorDisplayWidget(
+        errorType: ErrorType.emptyData,
+        message: 'No article data available',
+        onRetry: _loadArticle,
       );
     }
 
+    // Show article content
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -196,42 +214,95 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
             selectable: true,
           ),
           
-          // Related articles
-          if (_relatedArticles != null && _relatedArticles!.isNotEmpty) ...[
-            const SizedBox(height: 32),
-            const Divider(),
-            const SizedBox(height: 16),
-            Text(
-              'Related Articles',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            ..._relatedArticles!.map((article) => _buildRelatedArticleItem(article)),
-          ],
+          // Related articles section
+          const SizedBox(height: 32),
+          const Divider(),
+          const SizedBox(height: 16),
+          Text(
+            'Related Articles',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 16),
+          
+          // Related articles content
+          _buildRelatedArticlesSection(),
         ],
       ),
     );
   }
 
-  Widget _buildRelatedArticleItem(Article article) {
-    return ListTile(
-      title: Text(article.title),
-      subtitle: Text(
-        article.summary.isNotEmpty ? article.summary : 'No summary available',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ArticleDetailsPage(
-              articleId: article.id,
-              title: article.title,
-            ),
+  Widget _buildRelatedArticlesSection() {
+    // No related articles available
+    if (_article!.relatedArticles.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 16.0),
+        alignment: Alignment.center,
+        child: Text(
+          'No related articles found',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            fontStyle: FontStyle.italic,
           ),
-        );
-      },
+        ),
+      );
+    }
+    
+    // Loading related articles
+    if (_isLoadingRelated) {
+      return LoadingStateWidget(
+        loadingType: LoadingType.inline,
+        message: 'Loading related articles...',
+      );
+    }
+    
+    // Error loading related articles
+    if (_relatedError != null) {
+      return ErrorDisplayWidget(
+        errorType: ErrorType.network,
+        message: _relatedError!,
+        displayMode: ErrorDisplayMode.card,
+        onRetry: _loadRelatedArticles,
+      );
+    }
+    
+    // No related articles loaded
+    if (_relatedArticles == null || _relatedArticles!.isEmpty) {
+      return ErrorDisplayWidget(
+        errorType: ErrorType.emptyData,
+        message: 'Failed to load related articles',
+        displayMode: ErrorDisplayMode.card,
+        onRetry: _loadRelatedArticles,
+      );
+    }
+    
+    // Display related articles
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: _relatedArticles!.map((article) => _buildRelatedArticleItem(article)).toList(),
+    );
+  }
+
+  Widget _buildRelatedArticleItem(Article article) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      child: ListTile(
+        title: Text(article.title),
+        subtitle: Text(
+          article.summary.isNotEmpty ? article.summary : 'No summary available',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ArticleDetailsPage(
+                articleId: article.id,
+                title: article.title,
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 } 

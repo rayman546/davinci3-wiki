@@ -1,145 +1,216 @@
-# Davinci3 Wiki: Action Plan for Remaining Tasks
+# Davinci3 Wiki Enhancement Action Plan
 
-## Overview
-This action plan addresses the remaining tasks from the code quality audit, prioritizing high-impact and high-priority items. The plan is organized into four implementation weeks with specific tasks and deliverables.
+This document outlines the comprehensive action plan for enhancing the Davinci3 Wiki project across six key areas: Frontend Error Handling, Web Scraper Testing, Rust Dependency Management, Security, Testing, and Documentation. Each section includes prioritized tasks with specific implementation details.
 
-## Priority 1: Frontend Error Handling (Flutter UI)
+## 1. Frontend Error Handling
 
-- [x] **Implement Missing Error Logging Functionality**
-  - [x] Add `logError` method to `ApiErrorHandler` class
-  - [x] Implement console logging for development
-  - [x] Add persistent logging for production
-  - [x] Add toast notification option for user-visible errors
+### High Priority
+- [ ] **Implement consistent error handling across all UI components**
+  - [ ] Review all pages and components for ApiErrorHandler usage
+  - [ ] Add standard error handling to ArticlesPage, SearchPage, ArticleDetailsPage
+  - [ ] Implement offline mode detection and appropriate UI feedback
+  - [ ] Create standardized error display components (banners, dialogs, snackbars)
 
-- [ ] **Audit and Standardize Error Handling**
-  - [ ] Review all pages for consistent error handling patterns
-  - [ ] Update any components not using `ApiErrorHandler`
-  - [ ] Ensure all UI components display error states appropriately
-  - [ ] Verify offline state handling across all pages
+- [ ] **Add retry mechanisms with exponential backoff**
+  - [ ] Ensure all network requests use ApiErrorHandler.executeWithRetry
+  - [ ] Implement NetworkService with built-in retry logic
+  - [ ] Add user-facing retry buttons for failed operations
 
-- [ ] **Enhance Error Recovery Options**
-  - [ ] Add retry functionality with exponential backoff to all error states
-  - [ ] Implement offline queue for operations that can be retried when connection returns
-  - [ ] Add manual refresh options where appropriate
+- [ ] **Implement proper loading and empty states**
+  - [ ] Create standardized loading indicators
+  - [ ] Add skeleton loaders for content-heavy pages
+  - [ ] Implement empty state displays with actionable guidance
+  - [ ] Add transitions between loading/empty/error/content states
 
-- [ ] **Test Error Handling**
-  - [x] Create test cases for common error scenarios (404, 500, timeout, offline)
-  - [ ] Test error recovery mechanisms
-  - [ ] Test offline behavior and recovery
+### Medium Priority
+- [ ] **Enhance error reporting and logging**
+  - [ ] Expand ApiErrorHandler logging capabilities
+  - [ ] Implement structured error capturing with stack traces
+  - [ ] Add error analytics and reporting
+  - [ ] Create error detail view for developers
 
-## Priority 2: Additional Security Measures
+- [ ] **Expand error handling tests**
+  - [ ] Add tests for network failure scenarios
+  - [ ] Test retry mechanism functionality
+  - [ ] Cover edge cases like timeout handling
+  - [ ] Add UI tests for error display components
 
-- [x] **Implement Rate Limiting**
-  - [x] Add request frequency tracking middleware
-  - [x] Define appropriate rate limits for different API endpoints
-  - [x] Implement sliding window rate limiting algorithm
-  - [x] Add appropriate response headers for rate-limited requests
-  - [x] Test rate limiting under various load conditions
+## 2. Web Scraper Improvements
 
-- [x] **Add Input Validation**
-  - [x] Review all API endpoints for input validation needs
-  - [x] Implement validation for search endpoints (query parameters, sanitization)
-  - [x] Add validation for LLM question answering endpoints
-  - [x] Create consistent error responses for validation failures
-  - [x] Test with invalid inputs to verify proper handling
+### High Priority
+- [ ] **Expand error handling tests**
+  - [ ] Add tests for invalid URLs
+  - [ ] Test timeout handling with various timeout durations
+  - [ ] Implement tests for network interruptions
+  - [ ] Add tests for malformed HTML/responses
 
-- [x] **Document Security Measures**
-  - [x] Update API documentation with rate limiting details
-  - [x] Document input validation requirements
-  - [x] Create security guidelines for contributors
+- [ ] **Replace placeholder benchmarks with real data**
+  - [ ] Create realistic test datasets for medium, large, and xl categories
+  - [ ] Include diverse website types beyond Wikipedia
+  - [ ] Add sites with varying complexity and size
+  - [ ] Include internationalization test cases
 
-## Priority 3: Testing Enhancements
+- [ ] **Implement resource leak detection**
+  - [ ] Add memory profiling over extended runs
+  - [ ] Test with increasing numbers of concurrent requests
+  - [ ] Monitor connection pool usage
+  - [ ] Create automated tests for resource cleanup
 
-- [ ] **Set Up Integration Test Framework**
-  - [ ] Configure test environment for combined frontend/backend testing
-  - [ ] Create fixture data for integration tests
-  - [ ] Implement test utilities for API interactions
-  - [ ] Define integration test coverage goals
+### Medium Priority
+- [ ] **Add robust logging mechanism**
+  - [ ] Implement detailed logging for scraper operations
+  - [ ] Add progress tracking for large-scale scrapes
+  - [ ] Create log analysis utilities
+  - [ ] Implement configurable verbosity levels
 
-- [ ] **Implement API Endpoint Tests**
-  - [ ] Create test cases for article retrieval endpoints
-  - [ ] Implement tests for search functionality
-  - [ ] Add tests for semantic search
-  - [ ] Create tests for LLM integration
-  - [ ] Implement performance benchmarks for key operations
+- [ ] **Implement graceful JS error handling**
+  - [ ] Add detection for JavaScript errors during page loading
+  - [ ] Implement fallback content extraction methods
+  - [ ] Create timeout handling for script-heavy pages
+  - [ ] Test with known problematic JS-heavy sites
 
-- [ ] **Define LLM Testing Strategy**
-  - [ ] Create deterministic LLM mock for unit testing
-  - [ ] Define approach for balancing mocked and real LLM tests
-  - [ ] Implement test suite for LLM-dependent features
-  - [ ] Document expected behavior and test coverage
+## 3. Rust Dependency Management
 
-## Priority 4: Web Scraper Testing and Validation
-
-- [x] **Create Benchmark Framework**
-  - [x] Implement timing instrumentation for web scraper operations
-  - [x] Create scripts to measure memory and CPU usage
-  - [x] Develop test datasets with 10, 50, 100, and 200 URLs
-  - [x] Set up automated benchmark execution
-
-- [x] **Perform Load Testing**
-  - [x] Test with increasing concurrency levels
-  - [x] Monitor resource usage under load
-  - [x] Identify and document bottlenecks
-  - [x] Establish resource usage guidelines
-
-- [x] **Validate Error Handling**
-  - [x] Test with deliberately invalid URLs
-  - [x] Test with URLs that timeout or return errors
-  - [x] Verify proper cleanup of resources after errors
-  - [x] Ensure errors in one URL don't affect others
-
-## Priority 5: Rust Dependency Management
-
-- [ ] **Review Dependencies**
-  - [ ] Audit Cargo.lock for loose version constraints
-  - [ ] Check for outdated dependencies
-  - [ ] Verify for known security vulnerabilities
-  - [ ] Test build reproducibility with locked versions
-
-- [ ] **Create Dependency Management Documentation**
-  - [ ] Document process for updating Rust dependencies
-  - [ ] Add guidelines for version specifications
-  - [ ] Create step-by-step instructions for regenerating Cargo.lock
+### High Priority
+- [ ] **Document dependency management procedures**
+  - [ ] Create dependency update guidelines in developer_guide.md
+  - [ ] Define version constraint conventions
   - [ ] Document handling of breaking changes
+  - [ ] Outline security vulnerability response process
+
+- [ ] **Implement dependency review process**
+  - [ ] Document review criteria for new dependencies
+  - [ ] Create update schedule for existing dependencies
+  - [ ] Define security audit procedures
+  - [ ] Outline compatibility testing requirements
+
+### Medium Priority
+- [ ] **Add dependency visualization tools**
+  - [ ] Document cargo-tree usage for dependency analysis
+  - [ ] Add scripts for automated dependency reports
+  - [ ] Create visualization of the dependency graph
+  - [ ] Track dependency sizes and compile-time impact
+
+## 4. Security Enhancements
+
+### High Priority
+- [ ] **Ensure rate limiting on all API endpoints**
+  - [ ] Apply RateLimiter to all endpoints in src/api/mod.rs
+  - [ ] Implement endpoint-specific rate limits for resource-intensive operations
+  - [ ] Add configuration options for rate limit thresholds
+  - [ ] Create monitoring for rate limit events
+
+- [ ] **Implement comprehensive input validation**
+  - [ ] Add validation for all API parameters
+  - [ ] Implement sanitization for user inputs
+  - [ ] Create test cases for validation edge cases
+  - [ ] Document validation rules in API documentation
+
+### Medium Priority
+- [ ] **Consider authentication mechanisms**
+  - [ ] Evaluate authentication options for local usage
+  - [ ] Implement basic authentication if deemed necessary
+  - [ ] Document security model in developer guide
+  - [ ] Add secure storage for authentication details
+
+- [ ] **Update security documentation**
+  - [ ] Document all implemented security measures in api_documentation.md
+  - [ ] Add security considerations to user manual
+  - [ ] Create security best practices for contributors
+  - [ ] Document threat model and mitigations
+
+## 5. Testing Expansion
+
+### High Priority
+- [ ] **Implement end-to-end tests for complete flows**
+  - [ ] Create tests covering UI through backend and LLM
+  - [ ] Test integration points between modules
+  - [ ] Add test helpers for common testing patterns
+  - [ ] Implement test data generators
+
+- [ ] **Document LLM testing strategy**
+  - [ ] Define approach for mocking LLM responses
+  - [ ] Create testing utilities for LLM interactions
+  - [ ] Outline periodic real LLM testing procedures
+  - [ ] Document test case coverage requirements
+
+### Medium Priority
+- [ ] **Add UI tests for user interactions**
+  - [ ] Implement widget tests for all UI components
+  - [ ] Create integration tests for multi-screen flows
+  - [ ] Test responsive behavior on different screen sizes
+  - [ ] Add accessibility testing
+
+- [ ] **Enhance test documentation**
+  - [ ] Update testing_guide.md with comprehensive testing procedures
+  - [ ] Document test coverage requirements
+  - [ ] Add examples for different test types
+  - [ ] Create troubleshooting guide for test failures
+
+## 6. Documentation Improvements
+
+### High Priority
+- [ ] **Expand developer guide**
+  - [ ] Add security considerations section
+  - [ ] Document performance optimization techniques
+  - [ ] Detail vector store implementation
+  - [ ] Create clearer setup instructions for all platforms
+
+- [ ] **Enhance user manual**
+  - [ ] Add troubleshooting section with common errors
+  - [ ] Document server start/stop procedures
+  - [ ] Create API usage examples
+  - [ ] Add file format documentation for custom content
+
+### Medium Priority
+- [ ] **Create architectural documentation**
+  - [ ] Update architecture diagrams
+  - [ ] Document system interactions
+  - [ ] Add deployment architecture options
+  - [ ] Create performance characteristics documentation
+
+- [ ] **Improve API documentation**
+  - [ ] Ensure all endpoints are documented
+  - [ ] Add examples for each endpoint
+  - [ ] Document error responses
+  - [ ] Create OpenAPI/Swagger documentation
+
+## 7. Code Style and Consistency
+
+### Medium Priority
+- [ ] **Ensure consistent code style**
+  - [ ] Document Rust coding conventions
+  - [ ] Define Flutter/Dart style guidelines
+  - [ ] Add linter configurations for IDE integration
+  - [ ] Create pre-commit hooks for style checking
+
+- [ ] **Implement automated style checking**
+  - [ ] Add CI checks for code style
+  - [ ] Document usage of clippy for Rust
+  - [ ] Configure dart analyze for Flutter
+  - [ ] Create style guide for contributors
 
 ## Implementation Timeline
 
-### Week 1: Frontend Error Handling & Security Foundations
-- Implement missing `logError` method in ApiErrorHandler ✅
-- Audit all UI pages for consistent error handling
-- Review Cargo.lock for immediate security concerns
-- Begin implementing rate limiting middleware ✅
+### Phase 1: Core Improvements (Weeks 1-2)
+- Frontend Error Handling: High Priority Items
+- Web Scraper: High Priority Items
+- Security: Rate Limiting and Input Validation
 
-### Week 2: Security Measures & Testing Framework
-- Complete input validation for critical endpoints ✅
-- Finish rate limiting implementation ✅
-- Document security measures in API documentation and developer guide ✅
-- Set up integration test framework
-- Begin implementation of API endpoint tests
+### Phase 2: Documentation and Testing (Weeks 3-4)
+- Testing: End-to-End Tests and LLM Strategy
+- Documentation: Developer Guide and User Manual
+- Rust Dependency Management: Documentation
 
-### Week 3: Web Scraper Testing & LLM Strategy
-- Create web scraper benchmark framework ✅
-- Implement initial benchmarks and load tests ✅
-- Define and document LLM testing strategy
-- Continue implementation of API endpoint tests
-
-### Week 4: Finalization & Documentation
-- Complete all remaining implementation tasks
-- Finalize testing across all components
-- Complete all documentation updates
-- Perform final code review and cleanup
+### Phase 3: Refinement and Completion (Weeks 5-6)
+- Complete all Medium Priority Items
+- Address any issues from earlier phases
+- Final review and QA testing
 
 ## Success Criteria
 
-- **Frontend Error Handling**: All error cases are handled gracefully with user-friendly messages and recovery options
-- **Security Measures**: System is protected against common attack vectors with proper rate limiting and input validation ✅
-- **Testing**: Comprehensive test suite covers all critical functionality with clear pass/fail criteria
-- **Web Scraper**: Performance characteristics are well-documented with established resource usage guidelines ✅
-- **Dependency Management**: Clear documentation exists for maintaining and updating dependencies
-
-## Next Steps
-
-1. Continue with frontend error handling by auditing all UI pages for consistent error handling
-2. Begin setting up the integration test framework
-3. Start looking into Rust dependency management 
+- All high-priority tasks completed
+- Test coverage of at least 80% for critical components
+- All documentation updated and validated
+- No critical security vulnerabilities
+- Improved error handling verified in all UI components 

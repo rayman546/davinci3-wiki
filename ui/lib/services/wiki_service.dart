@@ -41,7 +41,7 @@ class WikiService {
     final stopwatch = Stopwatch()..start();
     
     try {
-      return await ApiErrorHandler.execute<List<Article>>(
+      return await ApiErrorHandler.executeWithRetry<List<Article>>(
         apiCall: () async {
           final response = await _client.get(
             Uri.parse('$baseUrl/articles?page=$page&limit=$limit'),
@@ -63,6 +63,8 @@ class WikiService {
         },
         connectivityProvider: connectivityProvider,
         offlineErrorMessage: 'You are offline. Articles cannot be loaded.',
+        maxRetries: 2,
+        initialDelay: const Duration(milliseconds: 500),
       );
     } catch (e) {
       // Record error timing
@@ -140,6 +142,7 @@ class WikiService {
         connectivityProvider: connectivityProvider,
         offlineErrorMessage: 'You are offline. Article cannot be loaded.',
         maxRetries: 2,
+        initialDelay: const Duration(milliseconds: 500),
       );
     } catch (e) {
       // Record error timing
@@ -197,7 +200,7 @@ class WikiService {
     }
 
     try {
-      return await ApiErrorHandler.execute<List<SearchResult>>(
+      return await ApiErrorHandler.executeWithRetry<List<SearchResult>>(
         apiCall: () async {
           final response = await _client.get(
             Uri.parse('$baseUrl/search?q=${Uri.encodeComponent(query)}'),
@@ -219,6 +222,8 @@ class WikiService {
         },
         connectivityProvider: connectivityProvider,
         offlineErrorMessage: 'You are offline. Search cannot be performed.',
+        maxRetries: 2,
+        initialDelay: const Duration(milliseconds: 500),
       );
     } catch (e) {
       // Record error timing
@@ -276,7 +281,7 @@ class WikiService {
     }
 
     try {
-      return await ApiErrorHandler.execute<List<SearchResult>>(
+      return await ApiErrorHandler.executeWithRetry<List<SearchResult>>(
         apiCall: () async {
           final response = await _client.get(
             Uri.parse('$baseUrl/semantic-search?q=${Uri.encodeComponent(query)}'),
@@ -298,6 +303,8 @@ class WikiService {
         },
         connectivityProvider: connectivityProvider,
         offlineErrorMessage: 'You are offline. Semantic search cannot be performed.',
+        maxRetries: 2,
+        initialDelay: const Duration(milliseconds: 500),
       );
     } catch (e) {
       // Record error timing

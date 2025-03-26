@@ -774,4 +774,233 @@ cross build --target x86_64-unknown-linux-musl --release
 - [SQLite Documentation](https://www.sqlite.org/docs.html)
 - [LMDB Documentation](http://www.lmdb.tech/doc/)
 - [Ollama Documentation](https://ollama.ai/docs)
-- [Flutter Documentation](https://flutter.dev/docs) 
+- [Flutter Documentation](https://flutter.dev/docs)
+
+## Frontend Error Handling
+
+The UI implements a comprehensive error handling system to provide a consistent user experience across the application. This system consists of reusable components and patterns that handle different error states, loading states, and connectivity issues.
+
+### Key Components
+
+#### 1. ErrorDisplayWidget
+
+A versatile widget for displaying different types of errors with appropriate styling and actions.
+
+```dart
+ErrorDisplayWidget(
+  errorType: ErrorType.network,
+  message: 'Failed to connect to the server',
+  title: 'Connection Error',
+  onRetry: _retryOperation,
+  displayMode: ErrorDisplayMode.fullScreen,
+)
+```
+
+Features:
+- Multiple error types (network, server, client, validation, unexpected, emptyData, offline)
+- Different display modes (fullScreen, card, inline)
+- Customizable icons, colors, messages, and actions
+- Automatic connectivity checking and retry button disabling
+- Supports secondary actions
+
+#### 2. LoadingStateWidget
+
+A flexible widget for displaying various loading states with skeleton loading support.
+
+```dart
+LoadingStateWidget(
+  useSkeleton: true,
+  skeletonType: SkeletonType.article,
+  skeletonItemCount: 5,
+  message: 'Loading articles...',
+)
+```
+
+Features:
+- Different loading types (initial, pagination, refresh, inline)
+- Skeleton loading for better UX
+- Multiple skeleton types (article, searchResult, articleDetail, settings)
+- Customizable appearance and messages
+
+#### 3. NetworkAwareWidget
+
+A wrapper widget that handles online/offline states and shows appropriate content.
+
+```dart
+NetworkAwareWidget(
+  enforceConnectivity: true,
+  offlineMode: OfflineDisplayMode.inline,
+  offlineMessage: 'You are offline. Some features may be unavailable.',
+  onlineContent: YourMainContent(),
+)
+```
+
+Features:
+- Shows different content based on connectivity
+- Multiple display modes for offline state (fullScreen, inline, badge)
+- Configurable offline messages and actions
+- Option to enforce connectivity or allow offline content
+
+### Error Handling Service
+
+The `ApiErrorHandler` service provides utilities for handling API errors consistently:
+
+```dart
+// Execute API call with retry capability
+await ApiErrorHandler.executeWithRetry<List<Article>>(
+  apiCall: () async {
+    final response = await client.get(Uri.parse('$baseUrl/articles'));
+    return handleResponse(response);
+  },
+  connectivityProvider: connectivityProvider,
+  offlineErrorMessage: 'You are offline. Articles cannot be loaded.',
+  maxRetries: 2,
+  initialDelay: const Duration(milliseconds: 500),
+);
+```
+
+Features:
+- Consistent error message formatting
+- Retry mechanism with exponential backoff
+- Connectivity checking
+- Response handling and JSON parsing
+- Error logging and user notifications
+
+### Error Handling Patterns
+
+#### Handling Network Requests
+
+1. Wrap network-dependent UI with `NetworkAwareWidget`
+2. Use `ApiErrorHandler.executeWithRetry` for network calls
+3. Display loading state with `LoadingStateWidget`
+4. Handle errors with `ErrorDisplayWidget`
+5. Implement retry functionality
+6. Provide fallback to cached data when offline
+
+Example:
+
+```dart
+// In your service:
+Future<List<Article>> getArticles() async {
+  return await ApiErrorHandler.executeWithRetry<List<Article>>(
+    apiCall: () async {
+      // API call implementation
+    },
+    connectivityProvider: connectivityProvider,
+    offlineErrorMessage: 'You are offline. Articles cannot be loaded.',
+    maxRetries: 2,
+  );
+}
+
+// In your UI:
+Widget build(BuildContext context) {
+  return NetworkAwareWidget(
+    enforceConnectivity: false,
+    offlineMode: OfflineDisplayMode.inline,
+    onlineContent: _buildContent(),
+  );
+}
+
+Widget _buildContent() {
+  if (_error != null) {
+    return ErrorDisplayWidget(
+      errorType: ErrorType.network,
+      message: _error!,
+      onRetry: _loadData,
+    );
+  }
+  
+  if (_isLoading) {
+    return LoadingStateWidget(
+      useSkeleton: true,
+      skeletonType: SkeletonType.article,
+    );
+  }
+  
+  // Main content
+  return YourContentWidget();
+}
+```
+
+#### Empty State Handling
+
+Use `ErrorDisplayWidget` with `ErrorType.emptyData` for empty states:
+
+```dart
+if (articles.isEmpty) {
+  return ErrorDisplayWidget(
+    errorType: ErrorType.emptyData,
+    message: 'No articles found',
+    onRetry: _refresh,
+  );
+}
+```
+
+#### Offline State Handling
+
+The `NetworkAwareWidget` will automatically handle offline states, but you can also manually check:
+
+```dart
+final isConnected = context.watch<ConnectivityProvider>().isConnected;
+if (!isConnected) {
+  return ErrorDisplayWidget(
+    errorType: ErrorType.offline,
+    message: 'This feature requires an internet connection',
+  );
+}
+```
+
+### Testing Error Handling
+
+When testing error handling in the UI, consider these scenarios:
+
+1. Network errors (timeout, connection refused)
+2. Server errors (500 status codes)
+3. Client errors (400 status codes)
+4. Offline mode
+5. Empty results
+6. Transitions between states (loading → error → success)
+
+Example test:
+
+```dart
+testWidgets('Shows error widget when API fails', (WidgetTester tester) async {
+  // Mock API failure
+  when(mockWikiService.getArticles()).thenThrow(Exception('Network error'));
+  
+  // Build widget
+  await tester.pumpWidget(MyApp(wikiService: mockWikiService));
+  
+  // Verify loading state is shown first
+  expect(find.byType(LoadingStateWidget), findsOneWidget);
+  
+  // Wait for API call to complete
+  await tester.pumpAndSettle();
+  
+  // Verify error widget is shown
+  expect(find.byType(ErrorDisplayWidget), findsOneWidget);
+  expect(find.text('Network error'), findsOneWidget);
+  
+  // Test retry functionality
+  await tester.tap(find.text('Try Again'));
+  await tester.pump();
+  
+  // Verify loading state is shown again
+  expect(find.byType(LoadingStateWidget), findsOneWidget);
+});
+```
+
+### Best Practices
+
+1. **Consistent error types**: Use the appropriate `ErrorType` for different error conditions
+2. **Skeleton loading**: Use skeleton loading for better UX during initial loads
+3. **Retry functionality**: Always provide retry options for recoverable errors
+4. **Offline awareness**: Design your UI to work offline where possible, using cached data
+5. **Clear error messages**: Provide user-friendly error messages that suggest actions
+6. **Background operations**: Handle errors in background operations gracefully
+7. **Cancellation handling**: Properly handle cancellations during page navigation
+
+For detailed implementation examples, refer to:
+- `ArticlesPage` for list handling
+- `SearchPage` for search functionality
+- `ArticleDetailsPage` for detail view patterns 

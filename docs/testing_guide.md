@@ -15,6 +15,7 @@
 8. [Continuous Integration](#continuous-integration)
 9. [Code Coverage](#code-coverage)
 10. [Troubleshooting](#troubleshooting)
+11. [Testing Frontend Error Handling](#testing-frontend-error-handling)
 
 ## Introduction
 
@@ -351,3 +352,281 @@ If tests leave behind resources:
 1. Use `tempdir` for temporary file operations
 2. Implement `Drop` for test fixtures
 3. Use Rust's RAII pattern to ensure cleanup 
+
+## Testing Frontend Error Handling
+
+Testing error handling in the UI is critical to ensure a good user experience under all conditions. This section covers techniques for testing the various error states, loading conditions, and connectivity scenarios.
+
+### UI Error Handling Testing Strategy
+
+1. **Component Tests**: Test individual error handling components in isolation
+2. **Integration Tests**: Test error handling in the context of full pages
+3. **Offline Mode Tests**: Test behavior when the device is offline
+4. **State Transition Tests**: Test transitions between different states (loading, error, success)
+5. **Retry Mechanism Tests**: Test that retry functionality works correctly
+
+### Testing Error Display Components
+
+Use the `testWidgets` function to test the `ErrorDisplayWidget` with different configurations:
+
+```dart
+testWidgets('ErrorDisplayWidget shows correct content', (WidgetTester tester) async {
+  // Build widget
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: ErrorDisplayWidget(
+        errorType: ErrorType.network,
+        message: 'Connection failed',
+        title: 'Network Error',
+        onRetry: () {}, // Mock callback
+      ),
+    ),
+  ));
+  
+  // Verify content
+  expect(find.text('Network Error'), findsOneWidget);
+  expect(find.text('Connection failed'), findsOneWidget);
+  expect(find.byIcon(Icons.signal_wifi_off), findsOneWidget);
+  expect(find.byType(ElevatedButton), findsOneWidget);
+});
+```
+
+### Testing Loading States
+
+Test the `LoadingStateWidget` with different configurations:
+
+```dart
+testWidgets('LoadingStateWidget shows skeleton loading', (WidgetTester tester) async {
+  // Build widget
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: LoadingStateWidget(
+        useSkeleton: true,
+        skeletonType: SkeletonType.article,
+        skeletonItemCount: 3,
+      ),
+    ),
+  ));
+  
+  // Verify skeleton items are rendered
+  expect(find.byType(Shimmer), findsOneWidget);
+  // Additional verification of skeleton items...
+});
+```
+
+### Testing Network-Aware Components
+
+Test the `NetworkAwareWidget` with different connectivity states:
+
+```dart
+testWidgets('NetworkAwareWidget shows offline content when disconnected', 
+    (WidgetTester tester) async {
+  // Create a mock connectivity provider
+  final mockConnectivityProvider = MockConnectivityProvider();
+  when(mockConnectivityProvider.isConnected).thenReturn(false);
+  
+  // Build widget with provider
+  await tester.pumpWidget(MaterialApp(
+    home: ChangeNotifierProvider<ConnectivityProvider>.value(
+      value: mockConnectivityProvider,
+      child: NetworkAwareWidget(
+        enforceConnectivity: true,
+        offlineMessage: 'You are offline',
+        onlineContent: const Text('Online Content'),
+      ),
+    ),
+  ));
+  
+  // Verify offline content is shown
+  expect(find.text('You are offline'), findsOneWidget);
+  expect(find.text('Online Content'), findsNothing);
+  
+  // Change connectivity state
+  when(mockConnectivityProvider.isConnected).thenReturn(true);
+  mockConnectivityProvider.notifyListeners();
+  await tester.pump();
+  
+  // Verify online content is now shown
+  expect(find.text('You are offline'), findsNothing);
+  expect(find.text('Online Content'), findsOneWidget);
+});
+```
+
+### Testing API Error Handling
+
+Test that API errors are properly handled and displayed:
+
+```dart
+testWidgets('Shows error when API call fails', (WidgetTester tester) async {
+  // Setup mock service
+  final mockWikiService = MockWikiService();
+  when(mockWikiService.getArticles(
+    any, any, any, 
+  )).thenThrow(Exception('API error'));
+  
+  // Build widget with mocked service
+  await tester.pumpWidget(MaterialApp(
+    home: Provider<WikiService>.value(
+      value: mockWikiService,
+      child: const ArticlesPage(),
+    ),
+  ));
+  
+  // Wait for API call and error handling
+  await tester.pumpAndSettle();
+  
+  // Verify error is displayed
+  expect(find.byType(ErrorDisplayWidget), findsOneWidget);
+  expect(find.text('API error'), findsOneWidget);
+});
+```
+
+### Testing Retry Functionality
+
+Test that retry functionality works correctly:
+
+```dart
+testWidgets('Retry button triggers data reload', (WidgetTester tester) async {
+  // Setup mock service that fails once then succeeds
+  final mockWikiService = MockWikiService();
+  var callCount = 0;
+  when(mockWikiService.getArticles(any, any, any)).thenAnswer((_) {
+    callCount++;
+    if (callCount == 1) {
+      throw Exception('First call fails');
+    }
+    return Future.value([MockArticle()]);
+  });
+  
+  // Build widget
+  await tester.pumpWidget(MaterialApp(
+    home: Provider<WikiService>.value(
+      value: mockWikiService,
+      child: const ArticlesPage(),
+    ),
+  ));
+  
+  // Wait for first call to fail
+  await tester.pumpAndSettle();
+  expect(find.byType(ErrorDisplayWidget), findsOneWidget);
+  
+  // Tap retry button
+  await tester.tap(find.text('Try Again'));
+  await tester.pump();
+  
+  // Verify loading state
+  expect(find.byType(LoadingStateWidget), findsOneWidget);
+  
+  // Wait for second call to succeed
+  await tester.pumpAndSettle();
+  
+  // Verify content is displayed
+  expect(find.byType(ErrorDisplayWidget), findsNothing);
+  expect(find.byType(ArticleCard), findsOneWidget);
+});
+```
+
+### Testing Offline Fallback
+
+Test that the app falls back to cached content when offline:
+
+```dart
+testWidgets('Shows cached content when offline', (WidgetTester tester) async {
+  // Setup mocks
+  final mockWikiService = MockWikiService();
+  final mockConnectivityProvider = MockConnectivityProvider();
+  final mockCacheService = MockCacheService();
+  
+  // Configure connectivity as offline
+  when(mockConnectivityProvider.isConnected).thenReturn(false);
+  
+  // Configure cache to return articles
+  when(mockCacheService.getCachedArticles(any, any))
+      .thenAnswer((_) => Future.value([MockArticle()]));
+  
+  // Configure service to use cache
+  when(mockWikiService.getArticles(
+    any, any, connectivityProvider: mockConnectivityProvider,
+  )).thenAnswer((_) async {
+    throw Exception('Offline');
+  });
+  
+  // Build widget with mocked services
+  await tester.pumpWidget(MaterialApp(
+    home: MultiProvider(
+      providers: [
+        Provider<WikiService>.value(value: mockWikiService),
+        ChangeNotifierProvider<ConnectivityProvider>.value(
+          value: mockConnectivityProvider),
+        Provider<CacheService>.value(value: mockCacheService),
+      ],
+      child: const ArticlesPage(),
+    ),
+  ));
+  
+  // Wait for render
+  await tester.pumpAndSettle();
+  
+  // Verify offline banner is shown
+  expect(find.text('You are offline'), findsOneWidget);
+  
+  // Verify cached content is displayed
+  expect(find.byType(ArticleCard), findsOneWidget);
+});
+```
+
+### Error Handling Test Checklist
+
+When testing a new page or component, ensure you test these error handling scenarios:
+
+- [ ] Initial loading state
+- [ ] Empty state with appropriate message
+- [ ] Network errors (timeout, connection failed)
+- [ ] Server errors (500 responses)
+- [ ] Client errors (400 responses)
+- [ ] Offline state with appropriate message
+- [ ] Offline with cached data
+- [ ] Retry functionality
+- [ ] Error during background operations
+- [ ] Canceled operations (e.g., during navigation)
+
+### Mocks for Error Handling Testing
+
+Create these mock classes to facilitate error handling testing:
+
+```dart
+class MockConnectivityProvider extends Mock implements ConnectivityProvider {
+  @override
+  bool get isConnected => super.noSuchMethod(
+    Invocation.getter(#isConnected),
+    returnValue: true,
+    returnValueForMissingStub: true,
+  );
+  
+  @override
+  void notifyListeners() {
+    super.noSuchMethod(Invocation.method(#notifyListeners, []));
+  }
+}
+
+class MockWikiService extends Mock implements WikiService {}
+
+class MockCacheService extends Mock implements CacheService {}
+
+class MockArticle extends Mock implements Article {
+  @override
+  String get id => 'mock-id';
+  
+  @override
+  String get title => 'Mock Article';
+  
+  @override
+  String get summary => 'This is a mock article for testing';
+  
+  @override
+  String get content => 'Mock content';
+  
+  @override
+  List<String> get relatedArticles => [];
+}
+``` 

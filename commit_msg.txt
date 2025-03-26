@@ -1,9 +1,0 @@
-[Cursor] Implement security measures and error handling
-
-- Add API error handling middleware
-- Implement rate limiting functionality
-- Add input validation for API endpoints
-- Enhance UI error handling
-- Update documentation with security best practices
-- Add error logs panel to UI
-- Create benchmark and error tests for web scraper

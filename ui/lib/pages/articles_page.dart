@@ -5,6 +5,9 @@ import '../services/wiki_service.dart';
 import '../providers/connectivity_provider.dart';
 import '../widgets/article_card.dart';
 import '../services/api_error_handler.dart';
+import '../widgets/error_display_widget.dart';
+import '../widgets/loading_state_widget.dart';
+import '../widgets/network_aware_widget.dart';
 import 'article_details_page.dart';
 
 class ArticlesPage extends StatefulWidget {
@@ -22,6 +25,7 @@ class _ArticlesPageState extends State<ArticlesPage> {
   static const _pageSize = 20;
   int _currentPage = 0;
   bool _hasMore = true;
+  bool _isLoadingMore = false;
 
   @override
   void initState() {
@@ -62,119 +66,117 @@ class _ArticlesPageState extends State<ArticlesPage> {
           _hasMore = articles.length == _pageSize;
           _currentPage++;
           _isLoading = false;
+          _isLoadingMore = false;
         });
       } catch (e) {
         setState(() {
           _error = ApiErrorHandler.getErrorMessage(e);
           _isLoading = false;
+          _isLoadingMore = false;
         });
         
-        // Show error snackbar
-        if (mounted) {
-          ApiErrorHandler.showErrorSnackBar(context, ApiErrorHandler.getErrorMessage(e));
-        }
+        // Log the error
+        ApiErrorHandler.logError(
+          'Failed to load articles: ${e.toString()}',
+          showToast: false, // Don't show toast for this error
+        );
       }
     }
   }
 
   void _onScroll() {
     if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
+        _scrollController.position.maxScrollExtent - 200 &&
+        !_isLoadingMore && 
+        _hasMore) {
+      setState(() {
+        _isLoadingMore = true;
+      });
       _loadArticles();
     }
   }
 
+  void _refreshArticles() {
+    setState(() {
+      _articles = null;
+      _currentPage = 0;
+      _hasMore = true;
+      _error = null;
+    });
+    _loadArticles();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isConnected = context.watch<ConnectivityProvider>().isConnected;
-
+    return NetworkAwareWidget(
+      enforceConnectivity: false, // Allow showing cached content when offline
+      offlineMode: OfflineDisplayMode.inline,
+      offlineMessage: 'You are offline. Showing cached articles.',
+      offlineAction: _refreshArticles,
+      offlineActionText: 'Refresh',
+      onlineContent: _buildPageContent(),
+    );
+  }
+  
+  Widget _buildPageContent() {
+    // Show error state if error and no articles
     if (_error != null && _articles == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Theme.of(context).colorScheme.error,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Failed to load articles',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: isConnected 
-                ? () {
-                  setState(() {
-                    _error = null;
-                    _articles = null;
-                    _currentPage = 0;
-                    _hasMore = true;
-                  });
-                  _loadArticles();
-                } 
-                : null, // Disable retry button when offline
-              child: const Text('Try Again'),
-            ),
-            if (!isConnected)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  'You are offline. Please connect to load articles.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-          ],
-        ),
+      return ErrorDisplayWidget(
+        errorType: ErrorType.network,
+        message: _error!,
+        title: 'Failed to load articles',
+        onRetry: _refreshArticles,
       );
     }
-
+    
+    // Show loading state if no articles yet
     if (_articles == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
+      return LoadingStateWidget(
+        useSkeleton: true,
+        skeletonType: SkeletonType.article,
+        skeletonItemCount: 5,
+        fullHeight: true,
+        message: 'Loading articles...',
       );
     }
-
+    
+    // Show empty state if no articles found
     if (_articles!.isEmpty) {
-      return Center(
-        child: Text(
-          'No articles found',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+      return ErrorDisplayWidget(
+        errorType: ErrorType.emptyData,
+        message: 'No articles found in the database.',
+        onRetry: _refreshArticles,
       );
     }
-
+    
+    // Show article list
     return RefreshIndicator(
       onRefresh: () async {
-        if (isConnected) {
-          setState(() {
-            _articles = null;
-            _currentPage = 0;
-            _hasMore = true;
-          });
-          await _loadArticles();
+        final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
+        if (connectivityProvider.isConnected) {
+          _refreshArticles();
+        } else {
+          // Show error message when trying to refresh while offline
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Can\'t refresh while offline'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
         }
       },
       child: ListView.builder(
         controller: _scrollController,
         padding: const EdgeInsets.all(8.0),
-        itemCount: _articles!.length + (_hasMore && isConnected ? 1 : 0),
+        itemCount: _articles!.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
+          // Show loading indicator at the end when loading more
           if (index == _articles!.length) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(16.0),
-                child: CircularProgressIndicator(),
-              ),
+            return LoadingStateWidget(
+              loadingType: LoadingType.pagination,
+              message: 'Loading more articles...',
             );
           }
 

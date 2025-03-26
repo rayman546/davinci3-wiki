@@ -29,6 +29,8 @@ dependencies:
   flutter_svg: ^2.0.10+1
   fluttertoast: ^8.2.4
   connectivity_plus: ^5.0.2
+  http: ^0.13.5
+  shimmer: ^2.0.0
 
 dev_dependencies:
   flutter_test:
