@@ -6,6 +6,7 @@ import '../providers/connectivity_provider.dart';
 import '../services/api_error_handler.dart';
 import '../widgets/settings_panel.dart';
 import '../widgets/performance_metrics_panel.dart';
+import '../widgets/error_logs_panel.dart';
 import 'article_details_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -166,6 +167,16 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 8),
               _buildMostAccessedArticles(),
             ],
+            const SizedBox(height: 24),
+            Text(
+              'Diagnostics',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 300,  // Fixed height for the error logs panel
+              child: const ErrorLogsPanel(),
+            ),
           ],
         ),
       ),

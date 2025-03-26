@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../providers/connectivity_provider.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 /// A centralized error handler for API requests throughout the application.
 /// 
@@ -13,6 +14,17 @@ import '../providers/connectivity_provider.dart';
 /// - Executing API requests with proper error handling
 /// - Showing error dialogs and snackbars
 class ApiErrorHandler {
+  /// Log levels for different error severities
+  static const int LOG_LEVEL_INFO = 0;
+  static const int LOG_LEVEL_WARNING = 1;
+  static const int LOG_LEVEL_ERROR = 2;
+  
+  /// Maximum number of errors to keep in memory
+  static const int MAX_ERROR_LOG_SIZE = 100;
+  
+  /// In-memory log of recent errors
+  static final List<Map<String, dynamic>> _errorLog = [];
+
   /// Converts an exception into a user-friendly error message
   static String getErrorMessage(dynamic error) {
     if (error is TimeoutException) {
@@ -51,7 +63,7 @@ class ApiErrorHandler {
     } else if (response.statusCode >= 400 && response.statusCode < 500) {
       // Client errors
       final message = customErrorMessage ?? 'Client error';
-      final details = _tryParseErrorDetails(response.body);
+      final details = tryParseErrorDetails(response.body);
       throw Exception('$message: ${details ?? response.statusCode}');
     } else if (response.statusCode >= 500) {
       // Server errors
@@ -63,7 +75,7 @@ class ApiErrorHandler {
   }
 
   /// Helper method to try to parse error details from response
-  static String? _tryParseErrorDetails(String body) {
+  static String? tryParseErrorDetails(String body) {
     try {
       final jsonData = json.decode(body);
       if (jsonData is Map && jsonData.containsKey('message')) {
@@ -193,5 +205,95 @@ class ApiErrorHandler {
     );
     
     ScaffoldMessenger.of(context).showSnackBar(snackBar);
+  }
+  
+  /// Logs an error message to console and internal error log
+  /// 
+  /// Parameters:
+  /// - [message]: The error message to log
+  /// - [logLevel]: The severity level (LOG_LEVEL_INFO, LOG_LEVEL_WARNING, LOG_LEVEL_ERROR)
+  /// - [showToast]: Whether to show a toast message to the user
+  /// - [error]: The optional error object that caused this log
+  /// - [stackTrace]: The optional stack trace for the error
+  static void logError(
+    String message, {
+    int logLevel = LOG_LEVEL_ERROR,
+    bool showToast = true,
+    dynamic error,
+    StackTrace? stackTrace,
+  }) {
+    // Create timestamp for the log
+    final timestamp = DateTime.now().toIso8601String();
+    
+    // Format log message with appropriate level prefix
+    String levelPrefix;
+    switch (logLevel) {
+      case LOG_LEVEL_INFO:
+        levelPrefix = 'INFO';
+        break;
+      case LOG_LEVEL_WARNING:
+        levelPrefix = 'WARNING';
+        break;
+      case LOG_LEVEL_ERROR:
+      default:
+        levelPrefix = 'ERROR';
+        break;
+    }
+    
+    // Log to console
+    final logMessage = '[$levelPrefix] $timestamp: $message';
+    if (logLevel == LOG_LEVEL_ERROR) {
+      print('\x1B[31m$logMessage\x1B[0m'); // Red color for errors
+      if (error != null) print('\x1B[31mError details: $error\x1B[0m');
+      if (stackTrace != null) print('\x1B[31m$stackTrace\x1B[0m');
+    } else if (logLevel == LOG_LEVEL_WARNING) {
+      print('\x1B[33m$logMessage\x1B[0m'); // Yellow color for warnings
+      if (error != null) print('\x1B[33mError details: $error\x1B[0m');
+    } else {
+      print(logMessage); // Normal color for info
+      if (error != null) print('Error details: $error');
+    }
+    
+    // Store in in-memory log
+    _errorLog.add({
+      'timestamp': timestamp,
+      'level': levelPrefix,
+      'message': message,
+      'error': error?.toString(),
+      'stackTrace': stackTrace?.toString(),
+    });
+    
+    // Keep log size under limit
+    if (_errorLog.length > MAX_ERROR_LOG_SIZE) {
+      _errorLog.removeAt(0);
+    }
+    
+    // Show toast notification if enabled
+    if (showToast) {
+      Fluttertoast.showToast(
+        msg: message,
+        toastLength: Toast.LENGTH_LONG,
+        gravity: ToastGravity.BOTTOM,
+        timeInSecForIosWeb: 3,
+        backgroundColor: logLevel == LOG_LEVEL_ERROR 
+          ? Colors.red 
+          : (logLevel == LOG_LEVEL_WARNING ? Colors.amber : Colors.grey[700]),
+        textColor: Colors.white,
+        fontSize: 16.0,
+      );
+    }
+    
+    // TODO: In production, we could also send logs to a remote logging service
+    // or write to a persistent log file
+  }
+  
+  /// Returns the recent error logs
+  static List<Map<String, dynamic>> getErrorLogs() {
+    return List.from(_errorLog.reversed);
+  }
+  
+  /// Clears the error log
+  static void clearErrorLog() {
+    _errorLog.clear();
   }
 } 

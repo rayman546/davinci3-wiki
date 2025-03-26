@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use warp::{Filter, Rejection, Reply};
+use warp::{Filter, Rejection, Reply, filters::BoxedFilter};
 use serde::{Deserialize, Serialize};
 use rusqlite::Connection;
 
@@ -9,11 +9,45 @@ use crate::db::DatabaseReader;
 use crate::vector::VectorStore;
 use crate::llm::LlmService;
 
+mod rate_limiter;
+use rate_limiter::{RateLimiter, with_rate_limiting};
+
+mod validation;
+use validation::{validate_article_title, validate_search_query};
+
+mod error_handler;
+use error_handler::handle_rejection;
+
 pub struct ApiServer {
     db_path: String,
     vector_store: Arc<VectorStore>,
     llm_service: Arc<LlmService>,
     allowed_origins: Vec<String>,
+    rate_limiters: ApiRateLimiters,
+}
+
+/// Rate limiters for different API endpoints with different limits
+#[derive(Clone)]
+pub struct ApiRateLimiters {
+    /// Standard rate limiter for most endpoints (100 requests per minute)
+    standard: RateLimiter,
+    /// More restrictive rate limiter for computationally expensive endpoints (20 requests per minute)
+    restricted: RateLimiter,
+    /// Very restrictive rate limiter for LLM endpoints (5 requests per minute)
+    llm: RateLimiter,
+}
+
+impl Default for ApiRateLimiters {
+    fn default() -> Self {
+        Self {
+            // 100 requests per minute
+            standard: RateLimiter::new(100, 60),
+            // 20 requests per minute
+            restricted: RateLimiter::new(20, 60),
+            // 5 requests per minute
+            llm: RateLimiter::new(5, 60),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +87,7 @@ impl ApiServer {
             vector_store,
             llm_service,
             allowed_origins,
+            rate_limiters: ApiRateLimiters::default(),
         }
     }
 
@@ -61,6 +96,12 @@ impl ApiServer {
         let vector_store = self.vector_store.clone();
         let llm_service = self.llm_service.clone();
         let allowed_origins = self.allowed_origins.clone();
+        let rate_limiters = self.rate_limiters.clone();
+
+        // Start cleanup tasks for rate limiters
+        rate_limiters.standard.clone().start_cleanup(60).await;
+        rate_limiters.restricted.clone().start_cleanup(60).await;
+        rate_limiters.llm.clone().start_cleanup(60).await;
 
         // Create connection pool
         let db = Arc::new(Mutex::new(Connection::open(&db_path)?));
@@ -73,48 +114,75 @@ impl ApiServer {
             .and(warp::path("articles"))
             .and(warp::get())
             .and(with_db(db.clone()))
-            .and_then(handle_get_articles);
+            .and_then(handle_get_articles)
+            .boxed();
+        
+        // Apply standard rate limiting
+        let articles_route = with_rate_limiting(&rate_limiters.standard, articles_route);
 
         // GET /api/articles/:title
         let article_route = api
             .and(warp::path("articles"))
-            .and(warp::path::param())
+            .and(validate_article_title())
+            .and(warp::path::param::<String>())
             .and(warp::get())
             .and(with_db(db.clone()))
-            .and_then(handle_get_article);
+            .and_then(handle_get_article)
+            .boxed();
+        
+        // Apply standard rate limiting
+        let article_route = with_rate_limiting(&rate_limiters.standard, article_route);
 
         // GET /api/search
         let search_route = api
             .and(warp::path("search"))
             .and(warp::get())
+            .and(validate_search_query())
             .and(warp::query::<SearchQuery>())
             .and(with_db(db.clone()))
-            .and_then(handle_search);
+            .and_then(handle_search)
+            .boxed();
+        
+        // Apply standard rate limiting
+        let search_route = with_rate_limiting(&rate_limiters.standard, search_route);
 
         // GET /api/semantic-search
         let semantic_search_route = api
             .and(warp::path("semantic-search"))
             .and(warp::get())
+            .and(validate_search_query())
             .and(warp::query::<SearchQuery>())
             .and(with_db(db.clone()))
             .and(with_vector_store(vector_store.clone()))
-            .and_then(handle_semantic_search);
+            .and_then(handle_semantic_search)
+            .boxed();
+        
+        // Apply restricted rate limiting for computationally expensive endpoint
+        let semantic_search_route = with_rate_limiting(&rate_limiters.restricted, semantic_search_route);
 
         // GET /api/articles/:title/summary
         let summary_route = api
             .and(warp::path("articles"))
-            .and(warp::path::param())
+            .and(validate_article_title())
+            .and(warp::path::param::<String>())
             .and(warp::path("summary"))
             .and(warp::get())
             .and(with_db(db.clone()))
             .and(with_llm(llm_service.clone()))
-            .and_then(handle_article_summary);
+            .and_then(handle_article_summary)
+            .boxed();
+        
+        // Apply LLM rate limiting for the most expensive endpoint
+        let summary_route = with_rate_limiting(&rate_limiters.llm, summary_route);
 
         // GET /api/status
         let status_route = api
             .and(warp::path("status"))
             .and(warp::get())
-            .and_then(handle_status);
+            .and_then(handle_status)
+            .boxed();
+        
+        // Status endpoint has no rate limiting
 
         // Configure CORS with specific allowed origins
         let cors = warp::cors()
@@ -130,7 +198,8 @@ impl ApiServer {
             .or(semantic_search_route)
             .or(summary_route)
             .or(status_route)
-            .with(cors);
+            .with(cors)
+            .recover(handle_rejection); // Add error handling
 
         // Start the server
         warp::serve(routes).run(([127, 0, 0, 1], port)).await;

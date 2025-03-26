@@ -22,6 +22,60 @@ davinci3-wiki start --host 0.0.0.0 --port 9090
 
 The API does not currently require authentication as it is designed to run locally. If exposing the API to a network, consider using a reverse proxy with authentication.
 
+## Security Measures
+
+### Rate Limiting
+
+To prevent abuse and ensure system stability, the API implements rate limiting using a sliding window algorithm. Different endpoints have different rate limits based on their computational cost:
+
+| API Category | Rate Limit | Time Window | Example Endpoints |
+|--------------|------------|-------------|-------------------|
+| Standard     | 100 requests | 60 seconds | `/articles`, `/search` |
+| Restricted   | 20 requests | 60 seconds | `/semantic-search` |
+| LLM          | 5 requests  | 60 seconds | `/articles/:title/summary` |
+
+When a rate limit is exceeded, the API will respond with a `429 Too Many Requests` status code and a JSON body containing:
+
+```json
+{
+  "status": "error",
+  "message": "Rate limit exceeded. Please try again later.",
+  "retry_after": 45
+}
+```
+
+The response also includes a `Retry-After` header with the number of seconds to wait before making another request.
+
+For successful requests, the `X-RateLimit-Remaining` header indicates how many requests are left in the current time window.
+
+### Input Validation
+
+All API endpoints implement strict input validation to prevent invalid or malicious inputs. The validation rules include:
+
+#### Search Parameters
+
+- `q` (query): Maximum length of 200 characters, only allows alphanumeric characters and common punctuation
+- `limit`: Maximum value of 100, minimum value of 1
+- `offset`: Maximum value of 1000
+
+#### Article Paths
+
+- `:title`: Maximum length of 200 characters, only allows alphanumeric characters and common punctuation
+
+### Error Responses
+
+When validation fails, the API responds with a `400 Bad Request` status code and a JSON body:
+
+```json
+{
+  "status": "error",
+  "message": "Search query exceeds maximum length of 200 characters",
+  "field": "query"
+}
+```
+
+The `field` property identifies which field failed validation.
+
 ## API Endpoints
 
 ### Articles

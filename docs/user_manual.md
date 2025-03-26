@@ -21,6 +21,7 @@
    - [Settings and Configuration](#settings-and-configuration)
 6. [Advanced Usage](#advanced-usage)
    - [API Integration](#api-integration)
+   - [Security Features](#security-features)
    - [Performance Tuning](#performance-tuning)
    - [Adding Custom Content](#adding-custom-content)
 7. [Maintenance](#maintenance)
@@ -346,6 +347,55 @@ curl http://localhost:8080/articles/12345
 # Get an answer to a question about an article
 curl http://localhost:8080/answer?q=What%20is%20the%20main%20topic%3F&article_id=12345
 ```
+
+### Security Features
+
+The Davinci3 Wiki system includes several security features to protect against misuse:
+
+#### Rate Limiting
+
+The API enforces rate limits to prevent abuse and ensure system stability:
+
+| Feature | Rate Limit | Time Window |
+|---------|------------|-------------|
+| Regular searches | 100 requests | 60 seconds |
+| Semantic searches | 20 requests | 60 seconds |
+| LLM operations | 5 requests | 60 seconds |
+
+When you reach a rate limit, the system will respond with a `429 Too Many Requests` status code. You'll need to wait before making additional requests.
+
+Each successful API response includes a header showing how many requests you have remaining:
+```
+X-RateLimit-Remaining: 42
+```
+
+#### Input Validation
+
+The system implements strict input validation to protect against invalid inputs:
+
+- Search queries have a maximum length of 200 characters
+- Article titles have a maximum length of 200 characters
+- Only alphanumeric characters and common punctuation are allowed
+- Page limits have a maximum value of 100 results per page
+
+When providing invalid input, you'll receive a `400 Bad Request` response with details about the validation failure.
+
+#### Error Handling
+
+For security-related errors, the system will:
+
+1. Log the event with appropriate security context
+2. Return a descriptive error message
+3. Include only the necessary information without exposing internal details
+
+#### Security Headers
+
+All API responses include security headers to help protect against common web vulnerabilities:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy: default-src 'self'`
+- `X-XSS-Protection: 1; mode=block`
 
 ### Performance Tuning
 

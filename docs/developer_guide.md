@@ -454,6 +454,249 @@ void main() {
 - Implement worker pools for parallel processing
 - Use channels for communication between threads
 
+## Security Implementation
+
+### Rate Limiting
+
+The system implements a sliding window rate limiter to prevent abuse and ensure system stability:
+
+```rust
+pub struct RateLimiter {
+    windows: Arc<Mutex<HashMap<String, SlidingWindow>>>,
+    limits: HashMap<EndpointCategory, (u32, Duration)>,
+}
+
+impl RateLimiter {
+    pub fn new() -> Self {
+        let mut limits = HashMap::new();
+        // Define rate limits for different endpoint categories
+        limits.insert(EndpointCategory::Standard, (100, Duration::from_secs(60))); // 100 req/min
+        limits.insert(EndpointCategory::Restricted, (20, Duration::from_secs(60))); // 20 req/min
+        limits.insert(EndpointCategory::LLM, (5, Duration::from_secs(60))); // 5 req/min
+        
+        RateLimiter {
+            windows: Arc::new(Mutex::new(HashMap::new())),
+            limits,
+        }
+    }
+    
+    pub async fn check(&self, ip: &str, category: EndpointCategory) -> Result<u32, RateLimitError> {
+        // Implementation details
+    }
+}
+```
+
+The rate limiter is integrated into the API as middleware:
+
+```rust
+async fn rate_limit_middleware(
+    req: Request,
+    next: Next,
+) -> Result<Response, Rejection> {
+    let ip = get_client_ip(&req).unwrap_or_else(|| "unknown".to_string());
+    let path = req.path().to_string();
+    let category = get_endpoint_category(&path);
+    
+    match RATE_LIMITER.check(&ip, category).await {
+        Ok(remaining) => {
+            let resp = next.run(req).await;
+            Ok(resp.header("X-RateLimit-Remaining", &remaining.to_string()))
+        },
+        Err(e) => {
+            let status = StatusCode::TOO_MANY_REQUESTS;
+            let retry_after = e.retry_after.as_secs();
+            
+            let json = json!({
+                "status": "error",
+                "message": "Rate limit exceeded. Please try again later.",
+                "retry_after": retry_after
+            });
+            
+            Ok(Response::builder()
+                .status(status)
+                .header("Content-Type", "application/json")
+                .header("Retry-After", retry_after.to_string())
+                .body(json.to_string().into())
+                .unwrap())
+        }
+    }
+}
+```
+
+### Input Validation
+
+The system implements comprehensive input validation using a combination of built-in validation in the web framework and custom validators:
+
+```rust
+// Example of a query parameter validation
+#[derive(Debug, Deserialize, Validate)]
+pub struct SearchQuery {
+    #[validate(length(min = 1, max = 200))]
+    #[validate(regex = r"^[a-zA-Z0-9\s\.,\-_:;'\"\?!]+$")]
+    pub q: String,
+    
+    #[validate(range(min = 1, max = 100))]
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    
+    #[validate(range(min = 0, max = 1000))]
+    #[serde(default)]
+    pub offset: u32,
+}
+
+// Example of path parameter validation
+fn validate_title(title: String) -> Result<String, Rejection> {
+    if title.len() > 200 {
+        return Err(reject::custom(ValidationError::new(
+            "Title exceeds maximum length of 200 characters"
+        )));
+    }
+    
+    let re = Regex::new(r"^[a-zA-Z0-9\s\.,\-_:;'\"\?!]+$").unwrap();
+    if !re.is_match(&title) {
+        return Err(reject::custom(ValidationError::new(
+            "Title contains invalid characters"
+        )));
+    }
+    
+    Ok(title)
+}
+```
+
+The validation is integrated into the request handlers:
+
+```rust
+pub async fn search(
+    query: Query<SearchQuery>,
+) -> Result<impl Reply, Rejection> {
+    // Validate the query parameters
+    query.validate().map_err(|e| reject::custom(ValidationError::from(e)))?;
+    
+    // Process the search request
+    // ...
+}
+
+pub async fn get_article_by_title(
+    title: Path<String>,
+) -> Result<impl Reply, Rejection> {
+    // Validate the path parameter
+    let title = validate_title(title.into_inner())?;
+    
+    // Process the get article request
+    // ...
+}
+```
+
+### Security Headers
+
+The API applies security headers to all responses using middleware:
+
+```rust
+async fn security_headers(
+    req: Request,
+    next: Next,
+) -> Result<Response, Rejection> {
+    let mut resp = next.run(req).await;
+    
+    resp.headers_mut().insert(
+        "X-Content-Type-Options", 
+        HeaderValue::from_static("nosniff")
+    );
+    resp.headers_mut().insert(
+        "X-Frame-Options", 
+        HeaderValue::from_static("DENY")
+    );
+    resp.headers_mut().insert(
+        "Content-Security-Policy", 
+        HeaderValue::from_static("default-src 'self'")
+    );
+    resp.headers_mut().insert(
+        "X-XSS-Protection", 
+        HeaderValue::from_static("1; mode=block")
+    );
+    
+    Ok(resp)
+}
+```
+
+### Error Handling for Security Events
+
+Security-related errors are logged with an increased severity level:
+
+```rust
+fn log_security_event(event_type: SecurityEventType, details: &str, ip: Option<&str>) {
+    let ip_str = ip.unwrap_or("unknown");
+    match event_type {
+        SecurityEventType::RateLimitExceeded => {
+            warn!("[SECURITY] Rate limit exceeded from IP {}: {}", ip_str, details);
+        },
+        SecurityEventType::ValidationFailure => {
+            warn!("[SECURITY] Validation failure from IP {}: {}", ip_str, details);
+        },
+        SecurityEventType::UnauthorizedAccess => {
+            error!("[SECURITY] Unauthorized access attempt from IP {}: {}", ip_str, details);
+        },
+    }
+}
+```
+
+### Testing Security Measures
+
+The project includes specific tests for security features:
+
+```rust
+#[tokio::test]
+async fn test_rate_limiting() {
+    let rate_limiter = RateLimiter::new();
+    let ip = "127.0.0.1";
+    let category = EndpointCategory::Standard;
+    
+    // Make 100 requests (the limit for Standard category)
+    for _ in 0..100 {
+        let result = rate_limiter.check(ip, category).await;
+        assert!(result.is_ok());
+    }
+    
+    // The 101st request should fail
+    let result = rate_limiter.check(ip, category).await;
+    assert!(result.is_err());
+    
+    // Wait for the window to slide
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    
+    // Should be able to make some requests again
+    let result = rate_limiter.check(ip, category).await;
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_input_validation() {
+    // Test valid input
+    let query = SearchQuery {
+        q: "valid search".to_string(),
+        limit: 50,
+        offset: 0,
+    };
+    assert!(query.validate().is_ok());
+    
+    // Test invalid search query (too long)
+    let query = SearchQuery {
+        q: "a".repeat(201),
+        limit: 50,
+        offset: 0,
+    };
+    assert!(query.validate().is_err());
+    
+    // Test invalid limit
+    let query = SearchQuery {
+        q: "valid search".to_string(),
+        limit: 101,
+        offset: 0,
+    };
+    assert!(query.validate().is_err());
+}
+```
+
 ## Deployment
 
 ### Building for Release

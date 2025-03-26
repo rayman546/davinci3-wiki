@@ -1,14 +1,9 @@
-[Cursor] Project structure cleanup and error handling implementation
+[Cursor] Implement security measures and error handling
 
-- Remove redundant main2.rs file
-- Verify and organize module structure
-- Implement error handling and logging framework
-- Successfully extract and validate Wikipedia dump
-- Update progress in .cursorrules
-
-Module organization:
-- src/error_handling/: error types and logging
-- src/parser/: XML parsing and text processing
-- Clean main.rs with proper error handling
-
-Build verified and running successfully. 
+- Add API error handling middleware
+- Implement rate limiting functionality
+- Add input validation for API endpoints
+- Enhance UI error handling
+- Update documentation with security best practices
+- Add error logs panel to UI
+- Create benchmark and error tests for web scraper
