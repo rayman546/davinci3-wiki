@@ -6,10 +6,9 @@ import 'services/wiki_service.dart';
 import 'services/search_history_service.dart';
 import 'services/cache_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/api_error_handler.dart';
 import 'providers/connectivity_provider.dart';
-import 'pages/home_page.dart';
 import 'pages/articles_page.dart';
-import 'pages/article_details_page.dart';
 import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
 
@@ -87,14 +86,7 @@ class DavinciWikiApp extends StatelessWidget {
         useMaterial3: true,
       ),
       themeMode: ThemeMode.system,
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const HomePage(),
-        '/articles': (context) => const ArticlesPage(),
-        '/article': (context) => const ArticleDetailsPage(),
-        '/search': (context) => const SearchPage(),
-        '/settings': (context) => const SettingsPage(),
-      },
+      home: const HomePage(),
     );
   }
 }
@@ -108,6 +100,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
+  bool _isCheckingConnection = false;
 
   late final List<Widget> _pages;
 
@@ -119,23 +112,64 @@ class _HomePageState extends State<HomePage> {
       SearchPage(),
       SettingsPage(),
     ];
+    
+    // Automatically check connection when the app starts
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkConnection();
+    });
+  }
+  
+  Future<void> _checkConnection() async {
+    if (_isCheckingConnection) return;
+    
+    setState(() {
+      _isCheckingConnection = true;
+    });
+    
+    try {
+      await Provider.of<ConnectivityProvider>(context, listen: false).checkConnection();
+    } catch (e) {
+      if (mounted) {
+        ApiErrorHandler.logError('Connection check failed: $e', showToast: false);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingConnection = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     // Access the connectivity status
-    final isConnected = context.watch<ConnectivityProvider>().isConnected;
+    final connectivityProvider = context.watch<ConnectivityProvider>();
+    final isConnected = connectivityProvider.isConnected;
     
     return Scaffold(
       appBar: AppBar(
         title: const Text('Davinci3 Wiki'),
         actions: [
-          // Connectivity indicator
+          // Connection status with refresh
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: isConnected 
-              ? const Icon(Icons.wifi, color: Colors.green)
-              : const Icon(Icons.wifi_off, color: Colors.red),
+            child: _isCheckingConnection
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                )
+              : IconButton(
+                  icon: Icon(
+                    isConnected ? Icons.wifi : Icons.wifi_off,
+                    color: isConnected ? Colors.green : Colors.red,
+                  ),
+                  onPressed: _checkConnection,
+                  tooltip: isConnected ? 'Connected' : 'Offline - Tap to check connection',
+                ),
           ),
         ],
       ),
@@ -176,10 +210,23 @@ class _HomePageState extends State<HomePage> {
             width: double.infinity,
             color: Colors.red.shade700,
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-            child: const Text(
-              'You are offline. Some features may be limited.',
-              style: TextStyle(color: Colors.white),
-              textAlign: TextAlign.center,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(
+                  child: Text(
+                    'You are offline. Some features may be limited.',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _checkConnection,
+                  child: const Text(
+                    'Check Connection',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
             ),
           ) 
         : null,
@@ -187,30 +234,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class ArticlesPage extends StatelessWidget {
-  const ArticlesPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('Articles Page'),
-    );
-  }
-}
-
-class SearchPage extends StatelessWidget {
-  const SearchPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text('Search Page'),
-    );
-  }
-}
-
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
+);
 
   @override
   Widget build(BuildContext context) {
@@ -218,4 +242,6 @@ class SettingsPage extends StatelessWidget {
       child: Text('Settings Page'),
     );
   }
-} 
+}
+
+ 

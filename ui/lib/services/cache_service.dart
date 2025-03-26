@@ -8,6 +8,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../models/article.dart';
 import '../models/search_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/api_error_handler.dart';
 
 class CacheService {
   static const String _dbName = 'wiki_cache.db';
@@ -175,7 +176,7 @@ class CacheService {
       final result = await _db!.rawQuery('SELECT COUNT(*) FROM $_articlesTable');
       return result.isNotEmpty ? result.first.values.first as int : 0;
     } catch (e) {
-      print('Error getting article count: $e');
+      ApiErrorHandler.logError('Error getting article count: $e');
       return 0;
     }
   }
@@ -194,7 +195,7 @@ class CacheService {
         _cacheHitRate = totalAccesses > 0 ? _cacheHits / totalAccesses : 0.0;
       }
     } catch (e) {
-      print('Error loading cache stats: $e');
+      ApiErrorHandler.logError('Error loading cache stats: $e');
     }
   }
 
@@ -599,7 +600,7 @@ class CacheService {
         }
       }
     } catch (e) {
-      print('Error reading from disk cache: $e');
+      ApiErrorHandler.logError('Error reading from disk cache: $e');
     }
     
     _cacheMisses++;
@@ -632,7 +633,7 @@ class CacheService {
       // Update cache size estimate
       _updateCacheSize();
     } catch (e) {
-      print('Error writing to disk cache: $e');
+      ApiErrorHandler.logError('Error writing to disk cache: $e');
     }
   }
   
@@ -649,7 +650,7 @@ class CacheService {
       // Update cache size estimate
       _updateCacheSize();
     } catch (e) {
-      print('Error removing from disk cache: $e');
+      ApiErrorHandler.logError('Error removing from disk cache: $e');
     }
   }
   
@@ -668,7 +669,7 @@ class CacheService {
       // Update cache size estimate
       _cacheSize = 0.0;
     } catch (e) {
-      print('Error clearing disk cache: $e');
+      ApiErrorHandler.logError('Error clearing disk cache: $e');
     }
   }
   
@@ -724,7 +725,7 @@ class CacheService {
       
       _cacheSize = totalSize;
     } catch (e) {
-      print('Error calculating cache size: $e');
+      ApiErrorHandler.logError('Error calculating cache size: $e');
     }
   }
   

@@ -6,6 +6,7 @@ import '../services/wiki_service.dart';
 import '../services/search_history_service.dart';
 import '../providers/connectivity_provider.dart';
 import '../widgets/search_result_card.dart';
+import '../services/api_error_handler.dart';
 import 'article_details_page.dart';
 
 class SearchPage extends StatefulWidget {
@@ -56,8 +57,8 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
-    final isConnected = Provider.of<ConnectivityProvider>(context, listen: false).isConnected;
-    if (!isConnected) {
+    final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
+    if (!connectivityProvider.isConnected) {
       setState(() {
         _error = 'You are offline. Cannot perform search.';
         _isLoading = false;
@@ -77,8 +78,14 @@ class _SearchPageState extends State<SearchPage> {
       final searchHistoryService = Provider.of<SearchHistoryService>(context, listen: false);
       
       final results = _isSemanticSearch
-          ? await wikiService.semanticSearch(query)
-          : await wikiService.search(query);
+          ? await wikiService.semanticSearch(
+              query,
+              connectivityProvider: connectivityProvider,
+            )
+          : await wikiService.search(
+              query,
+              connectivityProvider: connectivityProvider,
+            );
       
       // Add to search history
       await searchHistoryService.addSearch(query);
@@ -90,9 +97,17 @@ class _SearchPageState extends State<SearchPage> {
       });
     } catch (e) {
       setState(() {
-        _error = e.toString();
+        _error = ApiErrorHandler.getErrorMessage(e);
         _isLoading = false;
       });
+      
+      // Show error snackbar
+      if (mounted) {
+        ApiErrorHandler.showErrorSnackBar(
+          context, 
+          ApiErrorHandler.getErrorMessage(e),
+        );
+      }
     }
   }
 
@@ -181,11 +196,36 @@ class _SearchPageState extends State<SearchPage> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'Error: $_error',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Search error',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: isConnected 
+                    ? () {
+                      if (_searchController.text.isNotEmpty) {
+                        _performSearch(_searchController.text);
+                      }
+                    } 
+                    : null,
+                  child: const Text('Try Again'),
+                ),
+              ],
             ),
           ),
         if (_isLoading)
@@ -300,6 +340,7 @@ class _SearchPageState extends State<SearchPage> {
                             MaterialPageRoute(
                               builder: (context) => ArticleDetailsPage(
                                 articleId: result.articleId,
+                                title: result.title,
                               ),
                             ),
                           );

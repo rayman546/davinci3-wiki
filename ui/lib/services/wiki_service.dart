@@ -4,6 +4,8 @@ import 'package:http/http.dart' as http;
 import '../models/article.dart';
 import '../models/search_result.dart';
 import 'cache_service.dart';
+import 'api_error_handler.dart';
+import '../providers/connectivity_provider.dart';
 
 class WikiService {
   final String baseUrl;
@@ -33,38 +35,65 @@ class WikiService {
   Future<List<Article>> getArticles({
     int page = 1,
     int limit = 20,
+    required ConnectivityProvider connectivityProvider,
   }) async {
     final operationKey = 'getArticles_$page\_$limit';
     final stopwatch = Stopwatch()..start();
     
     try {
-      final response = await _client.get(
-        Uri.parse('$baseUrl/articles?page=$page&limit=$limit'),
+      return await ApiErrorHandler.execute<List<Article>>(
+        apiCall: () async {
+          final response = await _client.get(
+            Uri.parse('$baseUrl/articles?page=$page&limit=$limit'),
+          ).timeout(_cacheTimeout);
+          
+          return await ApiErrorHandler.handleResponse<List<Article>>(
+            response: response,
+            onSuccess: (jsonData) {
+              final List<dynamic> jsonList = jsonData;
+              final articles = jsonList.map((json) => Article.fromJson(json)).toList();
+              
+              // Cache articles in background
+              _cacheArticlesInBackground(articles);
+              
+              return articles;
+            },
+            customErrorMessage: 'Failed to load articles',
+          );
+        },
+        connectivityProvider: connectivityProvider,
+        offlineErrorMessage: 'You are offline. Articles cannot be loaded.',
       );
-      
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        final articles = jsonList.map((json) => Article.fromJson(json)).toList();
-        
-        // Cache articles in background
-        _cacheArticlesInBackground(articles);
-        
-        // Record timing
-        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
-        
-        return articles;
-      } else {
-        throw Exception('Failed to load articles: ${response.statusCode}');
-      }
     } catch (e) {
-      print('Error fetching articles: $e');
-      // Return empty list if offline and no cache
+      // Record error timing
       _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
-      return [];
+      
+      // Try to get cached results if available
+      try {
+        final cachedArticles = await _cacheService.getCachedArticles(page, limit);
+        if (cachedArticles != null && cachedArticles.isNotEmpty) {
+          _incrementCacheHit(operationKey);
+          return cachedArticles;
+        }
+      } catch (cacheError) {
+        // Ignore cache errors
+      }
+      
+      // If no cached results, rethrow the original error
+      rethrow;
+    } finally {
+      // Record timing if not already recorded as an error
+      if (stopwatch.isRunning) {
+        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
+        stopwatch.stop();
+      }
     }
   }
 
-  Future<Article> getArticle(String id) async {
+  Future<Article> getArticle(
+    String id, {
+    required ConnectivityProvider connectivityProvider,
+  }) async {
     final operationKey = 'getArticle_$id';
     final stopwatch = Stopwatch()..start();
     
@@ -77,32 +106,45 @@ class WikiService {
           _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
           
           // Refresh from network in background if we have connectivity
-          _refreshArticleInBackground(id);
+          if (connectivityProvider.isConnected) {
+            _refreshArticleInBackground(id);
+          }
           
           return cached;
         }
       } catch (e) {
-        print('Error accessing cache: $e');
+        // Continue with network request if cache fails
       }
       _incrementCacheMiss(operationKey);
     }
     
-    // Set up a timeout for the network request
     try {
-      final response = await _client.get(Uri.parse('$baseUrl/articles/$id'))
-          .timeout(_cacheTimeout);
-
-      if (response.statusCode == 200) {
-        final article = Article.fromJson(json.decode(response.body));
-        
-        // Cache article in background
-        _cacheArticleInBackground(article);
-        
-        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
-        return article;
-      }
+      return await ApiErrorHandler.executeWithRetry<Article>(
+        apiCall: () async {
+          final response = await _client.get(Uri.parse('$baseUrl/articles/$id'))
+              .timeout(_cacheTimeout);
+              
+          return await ApiErrorHandler.handleResponse<Article>(
+            response: response,
+            onSuccess: (jsonData) {
+              final article = Article.fromJson(jsonData);
+              
+              // Cache article in background
+              _cacheArticleInBackground(article);
+              
+              return article;
+            },
+            customErrorMessage: 'Failed to load article',
+          );
+        },
+        connectivityProvider: connectivityProvider,
+        offlineErrorMessage: 'You are offline. Article cannot be loaded.',
+        maxRetries: 2,
+      );
     } catch (e) {
-      print('Error fetching article: $e');
+      // Record error timing
+      _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
+      
       // Try to get from cache if network request failed
       final cached = await _cacheService.getCachedArticle(id);
       if (cached != null) {
@@ -110,14 +152,22 @@ class WikiService {
         _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
         return cached;
       }
-      _incrementCacheMiss(operationKey);
+      
+      // If no cached article, rethrow the error
+      rethrow;
+    } finally {
+      // Record timing if not already recorded
+      if (stopwatch.isRunning) {
+        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
+        stopwatch.stop();
+      }
     }
-
-    _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
-    throw Exception('Failed to load article');
   }
 
-  Future<List<SearchResult>> search(String query) async {
+  Future<List<SearchResult>> search(
+    String query, {
+    required ConnectivityProvider connectivityProvider,
+  }) async {
     if (query.isEmpty) {
       return [];
     }
@@ -133,34 +183,47 @@ class WikiService {
           _incrementCacheHit(operationKey);
           _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
           
-          // Refresh from network in background
-          _refreshSearchInBackground(query, false);
+          // Refresh from network in background if connected
+          if (connectivityProvider.isConnected) {
+            _refreshSearchInBackground(query, false);
+          }
           
           return cached;
         }
       } catch (e) {
-        print('Error accessing search cache: $e');
+        // Continue with network request if cache fails
       }
       _incrementCacheMiss(operationKey);
     }
 
     try {
-      final response = await _client.get(
-        Uri.parse('$baseUrl/search?q=${Uri.encodeComponent(query)}'),
-      ).timeout(_cacheTimeout);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        final results = jsonList.map((json) => SearchResult.fromJson(json)).toList();
-        
-        // Cache results in background
-        _cacheSearchResultsInBackground(query, results, false);
-        
-        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
-        return results;
-      }
+      return await ApiErrorHandler.execute<List<SearchResult>>(
+        apiCall: () async {
+          final response = await _client.get(
+            Uri.parse('$baseUrl/search?q=${Uri.encodeComponent(query)}'),
+          ).timeout(_cacheTimeout);
+          
+          return await ApiErrorHandler.handleResponse<List<SearchResult>>(
+            response: response,
+            onSuccess: (jsonData) {
+              final List<dynamic> jsonList = jsonData;
+              final results = jsonList.map((json) => SearchResult.fromJson(json)).toList();
+              
+              // Cache results in background
+              _cacheSearchResultsInBackground(query, results, false);
+              
+              return results;
+            },
+            customErrorMessage: 'Failed to perform search',
+          );
+        },
+        connectivityProvider: connectivityProvider,
+        offlineErrorMessage: 'You are offline. Search cannot be performed.',
+      );
     } catch (e) {
-      print('Error performing search: $e');
+      // Record error timing
+      _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
+      
       // Try to get from cache if network request failed
       final cached = await _cacheService.getCachedSearchResults(query, false);
       if (cached != null) {
@@ -168,19 +231,27 @@ class WikiService {
         _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
         return cached;
       }
-      _incrementCacheMiss(operationKey);
+      
+      // If no cached results, rethrow
+      rethrow;
+    } finally {
+      // Record timing if not already recorded
+      if (stopwatch.isRunning) {
+        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
+        stopwatch.stop();
+      }
     }
-
-    _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
-    throw Exception('Failed to perform search');
   }
 
-  Future<List<SearchResult>> semanticSearch(String query) async {
+  Future<List<SearchResult>> semanticSearch(
+    String query, {
+    required ConnectivityProvider connectivityProvider,
+  }) async {
     if (query.isEmpty) {
       return [];
     }
     
-    final operationKey = 'semanticSearch_${query.hashCode}';
+    final operationKey = 'semantic_search_${query.hashCode}';
     final stopwatch = Stopwatch()..start();
     
     // Try cache first if prioritizing cache
@@ -191,34 +262,47 @@ class WikiService {
           _incrementCacheHit(operationKey);
           _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
           
-          // Refresh from network in background
-          _refreshSearchInBackground(query, true);
+          // Refresh from network in background if connected
+          if (connectivityProvider.isConnected) {
+            _refreshSearchInBackground(query, true);
+          }
           
           return cached;
         }
       } catch (e) {
-        print('Error accessing semantic search cache: $e');
+        // Continue with network request if cache fails
       }
       _incrementCacheMiss(operationKey);
     }
 
     try {
-      final response = await _client.get(
-        Uri.parse('$baseUrl/semantic-search?q=${Uri.encodeComponent(query)}'),
-      ).timeout(_cacheTimeout);
-
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        final results = jsonList.map((json) => SearchResult.fromJson(json)).toList();
-        
-        // Cache results in background
-        _cacheSearchResultsInBackground(query, results, true);
-        
-        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
-        return results;
-      }
+      return await ApiErrorHandler.execute<List<SearchResult>>(
+        apiCall: () async {
+          final response = await _client.get(
+            Uri.parse('$baseUrl/semantic-search?q=${Uri.encodeComponent(query)}'),
+          ).timeout(_cacheTimeout);
+          
+          return await ApiErrorHandler.handleResponse<List<SearchResult>>(
+            response: response,
+            onSuccess: (jsonData) {
+              final List<dynamic> jsonList = jsonData;
+              final results = jsonList.map((json) => SearchResult.fromJson(json)).toList();
+              
+              // Cache results in background
+              _cacheSearchResultsInBackground(query, results, true);
+              
+              return results;
+            },
+            customErrorMessage: 'Failed to perform semantic search',
+          );
+        },
+        connectivityProvider: connectivityProvider,
+        offlineErrorMessage: 'You are offline. Semantic search cannot be performed.',
+      );
     } catch (e) {
-      print('Error performing semantic search: $e');
+      // Record error timing
+      _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
+      
       // Try to get from cache if network request failed
       final cached = await _cacheService.getCachedSearchResults(query, true);
       if (cached != null) {
@@ -226,11 +310,16 @@ class WikiService {
         _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isCache: true);
         return cached;
       }
-      _incrementCacheMiss(operationKey);
+      
+      // If no cached results, rethrow
+      rethrow;
+    } finally {
+      // Record timing if not already recorded
+      if (stopwatch.isRunning) {
+        _recordTiming(operationKey, stopwatch.elapsedMilliseconds);
+        stopwatch.stop();
+      }
     }
-
-    _recordTiming(operationKey, stopwatch.elapsedMilliseconds, isError: true);
-    throw Exception('Failed to perform semantic search');
   }
   
   // Background operations to avoid blocking UI
@@ -239,7 +328,7 @@ class WikiService {
       try {
         await _cacheService.cacheArticle(article);
       } catch (e) {
-        print('Error caching article in background: $e');
+        ApiErrorHandler.logError('Error caching article in background: $e');
       }
     });
   }
@@ -251,7 +340,7 @@ class WikiService {
           await _cacheService.cacheArticle(article);
         }
       } catch (e) {
-        print('Error caching articles in background: $e');
+        ApiErrorHandler.logError('Error caching articles in background: $e');
       }
     });
   }
@@ -265,7 +354,7 @@ class WikiService {
       try {
         await _cacheService.cacheSearchResults(query, results, isSemantic);
       } catch (e) {
-        print('Error caching search results in background: $e');
+        ApiErrorHandler.logError('Error caching search results in background: $e');
       }
     });
   }
@@ -279,7 +368,8 @@ class WikiService {
           await _cacheService.cacheArticle(article);
         }
       } catch (e) {
-        // Ignore errors in background refresh
+        // Silently log errors in background refresh
+        ApiErrorHandler.logError('Background article refresh failed: $e', showToast: false);
       }
     });
   }
@@ -298,7 +388,8 @@ class WikiService {
           await _cacheService.cacheSearchResults(query, results, isSemantic);
         }
       } catch (e) {
-        // Ignore errors in background refresh
+        // Silently log errors in background refresh
+        ApiErrorHandler.logError('Background search refresh failed: $e', showToast: false);
       }
     });
   }
@@ -366,46 +457,6 @@ class WikiService {
 
   void dispose() {
     _client.close();
-  }
-
-  /// Get the most frequently accessed articles
-  Future<List<dynamic>> getMostAccessedArticles({int limit = 5}) async {
-    try {
-      // Get access counts from cache service
-      final accessCounts = _cacheService.getAccessCounts();
-      
-      // Sort by access count (descending)
-      final sortedIds = accessCounts.entries
-          .where((entry) => entry.value > 0) // Only include articles that have been accessed
-          .toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
-      
-      // Limit the number of results
-      final topIds = sortedIds.take(limit).map((e) => e.key).toList();
-      
-      if (topIds.isEmpty) {
-        return [];
-      }
-      
-      // Fetch article details for each ID
-      final articles = <dynamic>[];
-      for (final id in topIds) {
-        try {
-          final article = await getArticle(id);
-          if (article != null) {
-            articles.add(article);
-          }
-        } catch (e) {
-          print('Error fetching article $id: $e');
-          // Continue with next article
-        }
-      }
-      
-      return articles;
-    } catch (e) {
-      print('Error getting most accessed articles: $e');
-      return [];
-    }
   }
 
   /// Calculate cache hit ratio

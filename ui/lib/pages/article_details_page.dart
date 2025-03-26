@@ -4,14 +4,16 @@ import 'package:provider/provider.dart';
 import '../models/article.dart';
 import '../services/wiki_service.dart';
 import '../providers/connectivity_provider.dart';
-import '../widgets/article_card.dart';
+import '../services/api_error_handler.dart';
 
 class ArticleDetailsPage extends StatefulWidget {
   final String articleId;
+  final String title;
 
   const ArticleDetailsPage({
     super.key,
     required this.articleId,
+    required this.title,
   });
 
   @override
@@ -21,8 +23,8 @@ class ArticleDetailsPage extends StatefulWidget {
 class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
   Article? _article;
   List<Article>? _relatedArticles;
+  bool _isLoading = false;
   String? _error;
-  bool _isLoading = true;
 
   @override
   void initState() {
@@ -38,34 +40,67 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
 
     try {
       final wikiService = Provider.of<WikiService>(context, listen: false);
-      final article = await wikiService.getArticle(widget.articleId);
+      final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
+      
+      final article = await wikiService.getArticle(
+        widget.articleId,
+        connectivityProvider: connectivityProvider,
+      );
+      
       setState(() {
         _article = article;
         _isLoading = false;
       });
-
-      if (article.relatedArticles != null && article.relatedArticles!.isNotEmpty) {
-        _loadRelatedArticles(article.relatedArticles!);
-      }
+      
+      // Load related articles after the main article is loaded
+      _loadRelatedArticles();
     } catch (e) {
       setState(() {
-        _error = e.toString();
+        _error = ApiErrorHandler.getErrorMessage(e);
         _isLoading = false;
       });
+      
+      // Show error dialog
+      if (mounted) {
+        ApiErrorHandler.showErrorSnackBar(context, ApiErrorHandler.getErrorMessage(e));
+      }
     }
   }
 
-  Future<void> _loadRelatedArticles(List<String> articleIds) async {
+  Future<void> _loadRelatedArticles() async {
+    if (_article == null || _article!.relatedArticles.isEmpty) {
+      return;
+    }
+
     try {
       final wikiService = Provider.of<WikiService>(context, listen: false);
-      final articles = await Future.wait(
-        articleIds.map((id) => wikiService.getArticle(id)),
-      );
-      setState(() {
-        _relatedArticles = articles;
-      });
+      final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
+      final relatedArticles = <Article>[];
+
+      // Limit to first 5 related articles
+      final relatedIds = _article!.relatedArticles.take(5).toList();
+      
+      for (final id in relatedIds) {
+        try {
+          final article = await wikiService.getArticle(
+            id,
+            connectivityProvider: connectivityProvider,
+          );
+          relatedArticles.add(article);
+        } catch (e) {
+          // Skip this related article
+          debugPrint('Failed to load related article $id: ${e.toString()}');
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _relatedArticles = relatedArticles;
+        });
+      }
     } catch (e) {
-      print('Error loading related articles: $e');
+      debugPrint('Error loading related articles: ${e.toString()}');
+      // Don't show errors for related articles, just log them
     }
   }
 
@@ -73,136 +108,130 @@ class _ArticleDetailsPageState extends State<ArticleDetailsPage> {
   Widget build(BuildContext context) {
     final isConnected = context.watch<ConnectivityProvider>().isConnected;
 
-    if (_error != null) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Error'),
-        ),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Error: $_error',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-              ),
-              const SizedBox(height: 16.0),
-              ElevatedButton(
-                onPressed: isConnected ? _loadArticle : null,
-                child: const Text('Retry'),
-              ),
-              if (!isConnected)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Text(
-                    'You are offline. Please reconnect to retry.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Loading...'),
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
-        title: Text(_article?.title ?? 'Article'),
+        title: Text(widget.title),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh article',
             onPressed: isConnected ? _loadArticle : null,
-            tooltip: isConnected ? 'Refresh' : 'Offline',
           ),
         ],
       ),
-      body: Row(
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading && _article == null) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_error != null && _article == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Failed to load article',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadArticle,
+              child: const Text('Try Again'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_article == null) {
+      return const Center(
+        child: Text('No article data available'),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 2,
-            child: ListView(
-              padding: const EdgeInsets.all(16.0),
-              children: [
-                if (_article?.summary != null) ...[
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Summary',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8.0),
-                          Text(
-                            _article!.summary!,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16.0),
-                ],
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: MarkdownBody(
-                      data: _article?.content ?? '',
-                      selectable: true,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          // Title and summary
+          Text(
+            _article!.title,
+            style: Theme.of(context).textTheme.headlineMedium,
           ),
-          if (_relatedArticles != null && _relatedArticles!.isNotEmpty)
-            SizedBox(
-              width: 300,
-              child: Card(
-                margin: const EdgeInsets.all(16.0),
-                child: ListView(
-                  padding: const EdgeInsets.all(16.0),
-                  children: [
-                    Text(
-                      'Related Articles',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 16.0),
-                    ..._relatedArticles!.map((article) => ArticleCard(
-                          article: article,
-                          onTap: () {
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => ArticleDetailsPage(
-                                  articleId: article.id,
-                                ),
-                              ),
-                            );
-                          },
-                        )),
-                  ],
-                ),
-              ),
+          const SizedBox(height: 8),
+          if (_article!.summary.isNotEmpty) ...[
+            Text(
+              _article!.summary,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+          ],
+          
+          // Main content
+          MarkdownBody(
+            data: _article!.content,
+            selectable: true,
+          ),
+          
+          // Related articles
+          if (_relatedArticles != null && _relatedArticles!.isNotEmpty) ...[
+            const SizedBox(height: 32),
+            const Divider(),
+            const SizedBox(height: 16),
+            Text(
+              'Related Articles',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            ..._relatedArticles!.map((article) => _buildRelatedArticleItem(article)),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildRelatedArticleItem(Article article) {
+    return ListTile(
+      title: Text(article.title),
+      subtitle: Text(
+        article.summary.isNotEmpty ? article.summary : 'No summary available',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ArticleDetailsPage(
+              articleId: article.id,
+              title: article.title,
+            ),
+          ),
+        );
+      },
     );
   }
 } 

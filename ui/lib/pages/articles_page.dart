@@ -4,6 +4,7 @@ import '../models/article.dart';
 import '../services/wiki_service.dart';
 import '../providers/connectivity_provider.dart';
 import '../widgets/article_card.dart';
+import '../services/api_error_handler.dart';
 import 'article_details_page.dart';
 
 class ArticlesPage extends StatefulWidget {
@@ -44,9 +45,12 @@ class _ArticlesPageState extends State<ArticlesPage> {
 
       try {
         final wikiService = Provider.of<WikiService>(context, listen: false);
+        final connectivityProvider = Provider.of<ConnectivityProvider>(context, listen: false);
+        
         final articles = await wikiService.getArticles(
           page: _currentPage + 1,
           limit: _pageSize,
+          connectivityProvider: connectivityProvider,
         );
 
         setState(() {
@@ -61,9 +65,14 @@ class _ArticlesPageState extends State<ArticlesPage> {
         });
       } catch (e) {
         setState(() {
-          _error = e.toString();
+          _error = ApiErrorHandler.getErrorMessage(e);
           _isLoading = false;
         });
+        
+        // Show error snackbar
+        if (mounted) {
+          ApiErrorHandler.showErrorSnackBar(context, ApiErrorHandler.getErrorMessage(e));
+        }
       }
     }
   }
@@ -79,35 +88,47 @@ class _ArticlesPageState extends State<ArticlesPage> {
   Widget build(BuildContext context) {
     final isConnected = context.watch<ConnectivityProvider>().isConnected;
 
-    if (_error != null) {
+    if (_error != null && _articles == null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              'Error: $_error',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Theme.of(context).colorScheme.error,
             ),
-            const SizedBox(height: 16.0),
+            const SizedBox(height: 16),
+            Text(
+              'Failed to load articles',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: isConnected ? () {
-                setState(() {
-                  _error = null;
-                  _articles = null;
-                  _currentPage = 0;
-                  _hasMore = true;
-                });
-                _loadArticles();
-              } : null, // Disable retry button when offline
-              child: const Text('Retry'),
+              onPressed: isConnected 
+                ? () {
+                  setState(() {
+                    _error = null;
+                    _articles = null;
+                    _currentPage = 0;
+                    _hasMore = true;
+                  });
+                  _loadArticles();
+                } 
+                : null, // Disable retry button when offline
+              child: const Text('Try Again'),
             ),
             if (!isConnected)
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Text(
-                  'You are offline. Please reconnect to retry.',
+                  'You are offline. Please connect to load articles.',
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -166,6 +187,7 @@ class _ArticlesPageState extends State<ArticlesPage> {
                 MaterialPageRoute(
                   builder: (context) => ArticleDetailsPage(
                     articleId: article.id,
+                    title: article.title,
                   ),
                 ),
               );

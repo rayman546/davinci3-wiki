@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import '../services/wiki_service.dart';
 import '../services/cache_service.dart';
 import '../providers/connectivity_provider.dart';
+import '../services/api_error_handler.dart';
 import '../widgets/settings_panel.dart';
 import '../widgets/performance_metrics_panel.dart';
+import 'article_details_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -46,9 +48,14 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _message = 'Error clearing cache: $e';
+        _message = ApiErrorHandler.getErrorMessage(e);
         _isError = true;
       });
+      
+      // Show error snackbar
+      if (mounted) {
+        ApiErrorHandler.showErrorSnackBar(context, ApiErrorHandler.getErrorMessage(e));
+      }
     }
   }
   
@@ -66,7 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _isLoadingMetrics = false;
       });
     } catch (e) {
-      print('Error loading performance metrics: $e');
+      ApiErrorHandler.logError('Error loading performance metrics: $e');
       setState(() {
         _isLoadingMetrics = false;
       });
@@ -182,9 +189,25 @@ class _SettingsPageState extends State<SettingsPage> {
           return Card(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: Text(
-                'Error loading most accessed articles: ${snapshot.error}',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    color: Theme.of(context).colorScheme.error,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Error loading articles',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    ApiErrorHandler.getErrorMessage(snapshot.error),
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             ),
           );
@@ -213,11 +236,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 subtitle: Text('ID: ${article.id}'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () {
-                  // Navigate to article details
-                  Navigator.pushNamed(
+                  // Navigate to article details using the ArticleDetailsPage directly
+                  Navigator.push(
                     context,
-                    '/article',
-                    arguments: article.id,
+                    MaterialPageRoute(
+                      builder: (context) => ArticleDetailsPage(
+                        articleId: article.id,
+                        title: article.title,
+                      ),
+                    ),
                   );
                 },
               );
